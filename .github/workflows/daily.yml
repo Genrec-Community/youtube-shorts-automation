@@ -7,7 +7,7 @@ on:
         required: false
         default: ''
   # Two runs daily: ~08:47 IST (03:17 UTC) and ~19:47 IST (14:17 UTC). Off-peak minute: GitHub drops scheduled runs under load at :00/:30.
-  # Each run makes ONE video (the next pending topic) and uploads it PRIVATE when YT_UPLOAD_ENABLE=true.
+  # Each run makes ONE video (the next pending topic). YouTube upload is PUBLIC when YT_UPLOAD_ENABLE=true; Instagram Reel publishes when IG_UPLOAD_ENABLE=true.
   schedule:
     - cron: '17 3 * * *'
     - cron: '17 14 * * *'
@@ -21,6 +21,8 @@ env:
   YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
   YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
   YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+  IG_USER_ID: ${{ secrets.IG_USER_ID }}
+  IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -250,11 +252,23 @@ jobs:
           timeout 1800 python3 .opencode/skills/yt-video/scripts/short.py build videos/daily --final
           cp videos/daily/out/final.mp4 ../out/explainer_vertical.mp4
           echo "render_step_seconds $(( $(date +%s) - t0 ))" >> ../out/timing.txt
-      - name: Upload vertical video to YouTube as PRIVATE (only when explicitly enabled)
+      - name: Upload vertical video to YouTube as PUBLIC (only when explicitly enabled)
         if: steps.pick.outputs.skip != 'true' && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
         working-directory: /home/runner/w
         run: |
-          python3 "$GITHUB_WORKSPACE/scripts/upload_youtube.py" --file out/explainer_vertical.mp4 --metadata proj/metadata.json --privacy private || echo "upload failed (see youtube_result.json)"
+          python3 "$GITHUB_WORKSPACE/scripts/upload_youtube.py" --file out/explainer_vertical.mp4 --metadata proj/metadata.json --privacy public || echo "upload failed (see youtube_result.json)"
+      - name: Publish Reel to Instagram (only when explicitly enabled)
+        if: steps.pick.outputs.skip != 'true' && vars.IG_UPLOAD_ENABLE == 'true' && env.IG_USER_ID != '' && env.IG_ACCESS_TOKEN != ''
+        working-directory: /home/runner/w
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test -f out/explainer_vertical.mp4 || { echo "no rendered video; skipping Instagram"; exit 0; }
+          TAG="reel-$(date +%Y%m%d-%H%M%S)-${{ github.run_id }}"
+          gh release create "$TAG" --repo "${{ github.repository }}" --title "Reel $TAG" --notes "Auto-hosted render for Instagram Reels publishing (Meta fetches the asset URL)." out/explainer_vertical.mp4
+          URL=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.assets[0].browser_download_url')
+          echo "hosted at: $URL"
+          python3 "$GITHUB_WORKSPACE/scripts/upload_instagram.py" --video-url "$URL" --metadata proj/metadata.json || echo "instagram publish failed (see instagram_result.json)"
       - name: Record run state in queue
         if: steps.pick.outputs.skip != 'true' && always()
         run: |
