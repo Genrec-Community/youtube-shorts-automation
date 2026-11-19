@@ -9,8 +9,7 @@ on:
   # One run daily at ~14:47 IST (09:17 UTC) = the yt-video skill slot. Off-peak minute: GitHub drops scheduled runs under load at :00/:30.
   # The 08:47 and 17:47 IST slots belong to stickman-shorts.yml (B5 / B1-B2 stickman styles).
   # Each run makes ONE video (the next pending topic). YouTube upload is PUBLIC when YT_UPLOAD_ENABLE=true; Instagram Reel publishes when IG_UPLOAD_ENABLE=true.
-  schedule:
-    - cron: '17 9 * * *'
+  # schedule: disabled 2026-11-19 - external cron-job.org trigger fires workflow_dispatch at 09:17 UTC (14:47 IST); GitHub's own scheduler silently skipped runs.
 permissions:
   contents: write
   issues: write
