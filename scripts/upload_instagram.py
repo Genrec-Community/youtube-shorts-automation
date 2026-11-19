@@ -40,7 +40,13 @@ def main():
         meta = json.load(open(a.metadata))
     except Exception:
         meta = {}
-    caption = a.caption or (meta.get("title", "") + "\n\n" + meta.get("description", "")).strip()
+    tags = meta.get("hashtags") or []
+    if isinstance(tags, str):
+        tags = [t.strip().lstrip("#") for t in tags.split(",") if t.strip()]
+    base = (meta.get("title", "") + "\n\n" + meta.get("description", "")).strip()
+    if tags:
+        base += "\n\n" + " ".join("#" + t for t in tags[:15])
+    caption = a.caption or base
     caption = caption[:2100]
 
     try:
