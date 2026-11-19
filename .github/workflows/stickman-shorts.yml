@@ -1,0 +1,294 @@
+name: stickman-shorts
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: 'Optional: force this exact topic text instead of picking from stickman-topics.csv'
+        required: false
+        default: ''
+      style:
+        description: 'Style for a forced topic: B1, B2, or B5'
+        required: false
+        default: 'B5'
+  # Two runs daily: ~08:47 IST (03:17 UTC) = B5 animated, ~17:47 IST (12:17 UTC) = B1/B2 alternating.
+  # Off-peak minute: GitHub drops scheduled runs under load at :00/:30.
+  # Each run makes ONE vertical Short (next pending topic of the slot's style pool in stickman-topics.csv).
+  schedule:
+    - cron: '17 3 * * *'
+    - cron: '17 12 * * *'
+permissions:
+  contents: write
+  issues: write
+concurrency:
+  group: stickman-shorts
+  cancel-in-progress: false
+env:
+  YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+  YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+  YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+  IG_USER_ID: ${{ secrets.IG_USER_ID }}
+  IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Pick next topic from the stickman queue (slot style pool)
+        id: pick
+        run: |
+          python3 - <<'PICK_PY'
+          import csv, os, sys
+          forced = os.environ.get('FORCED_TOPIC', '').strip()
+          forced_style = (os.environ.get('FORCED_STYLE', '').strip() or 'B5').upper()
+          sched = os.environ.get('SCHEDULE', '')
+          pool = {'17 3 * * *': {'B5'}, '17 12 * * *': {'B1', 'B2'}}.get(sched, {'B1', 'B2', 'B5'})
+          os.makedirs('/home/runner/w', exist_ok=True)
+          if forced:
+              open('/home/runner/w/topic.txt', 'w').write(forced + '\n')
+              open('/home/runner/w/style.txt', 'w').write(forced_style + '\n')
+              open('/home/runner/w/topic_id.txt', 'w').write('manual')
+              open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=false\ntopic_id=manual\n')
+              print('Forced topic:', forced, '| style:', forced_style)
+              sys.exit(0)
+          rows = [r for r in csv.DictReader(open('stickman-topics.csv', encoding='utf-8')) if None not in r]
+          closed = {r['topic'].strip().lower() for r in rows if r['status'] in ('done', 'in_progress')}
+          chosen = next((r for r in rows if r['status'] == 'pending' and r['style'].strip().upper() in pool
+                         and r['topic'].strip().lower() not in closed), None)
+          if not chosen:
+              print('Queue empty for style pool', sorted(pool))
+              open('/home/runner/w/pool.txt', 'w').write('-'.join(sorted(pool)))
+              open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=true\n')
+              sys.exit(0)
+          chosen['status'] = 'in_progress'
+          with open('stickman-topics.csv', 'w', newline='', encoding='utf-8') as f:
+              w = csv.DictWriter(f, fieldnames=rows[0].keys())
+              w.writeheader(); w.writerows(rows)
+          open('/home/runner/w/topic.txt', 'w').write(chosen['topic'].strip() + '\n')
+          open('/home/runner/w/style.txt', 'w').write(chosen['style'].strip().upper() + '\n')
+          open('/home/runner/w/topic_id.txt', 'w').write(chosen['id'])
+          open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=false\ntopic_id=%s\n' % chosen['id'])
+          print('Chosen:', chosen['id'], chosen['style'], chosen['topic'])
+          PICK_PY
+        env:
+          FORCED_TOPIC: ${{ inputs.topic }}
+          FORCED_STYLE: ${{ inputs.style }}
+          SCHEDULE: ${{ github.event.schedule }}
+      - name: Notify when the stickman queue is empty for this slot
+        if: steps.pick.outputs.skip == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          POOL=$(cat /home/runner/w/pool.txt 2>/dev/null || echo unknown)
+          TITLE="Stickman topic queue empty ($POOL) - add topics to stickman-topics.csv"
+          existing=$(gh issue list --state open --limit 50 --json title --jq '[.[] | select(.title == env.TITLE)] | length' 2>/dev/null || echo 0)
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "$TITLE" --body "The stickman-shorts run found no pending $POOL topics in stickman-topics.csv, so no video was generated. Add new rows with status pending and the next scheduled run will pick them up. Close this issue after adding topics."
+          else
+            echo "queue-empty issue already open; not duplicating"
+          fi
+      - name: Install system + media deps
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-core
+          npm install -g opencode-ai@1.19.6
+          mkdir -p $HOME/w/project $HOME/w/out
+          echo "start $(date +%s)" > $HOME/w/out/timing.txt
+      - name: Fetch the stickman-video-director skill
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          git clone --depth 1 https://github.com/kaomei/stickman-video-director $HOME/w/svd
+          cd $HOME/w/svd/skills/directing-stickman-videos
+          npm ci
+          node scripts/autopilot.mjs doctor || true
+      - name: Cache pip + Kokoro model
+        if: steps.pick.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            /home/runner/w/kokoro.onnx
+            /home/runner/w/voices.bin
+          key: stickman-kokoro-v1
+      - name: Prepare local narration route (Kokoro, free)
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          pip install kokoro-onnx==0.6.1 soundfile==0.14.0
+          cd $HOME/w
+          [ -s kokoro.onnx ] || curl -fsSL -o kokoro.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+          [ -s voices.bin ] || curl -fsSL -o voices.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+          cat > $HOME/w/tts.py <<'TTS_PY'
+          import sys, soundfile as sf
+          from kokoro_onnx import Kokoro
+          k = Kokoro('/home/runner/w/kokoro.onnx', '/home/runner/w/voices.bin')
+          text, out = sys.argv[1], sys.argv[2]
+          voice = sys.argv[3] if len(sys.argv) > 3 else 'am_michael'
+          s, sr = k.create(text, voice=voice, speed=1.0, lang='en-us')
+          sf.write(out, s, sr)
+          print('wrote', out, len(s)/sr, 'seconds')
+          TTS_PY
+          python3 $HOME/w/tts.py 'Narration route check.' $HOME/w/out/tts-check.wav
+      - name: OpenCode directs and renders the stickman Short (hy4-flash-free)
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w
+        run: |
+          TOPIC="$(cat $HOME/w/topic.txt)"; STYLE="$(cat $HOME/w/style.txt)"
+          cat > $HOME/w/PROMPT.md <<PROMPT_EOF
+          You are producing ONE vertical YouTube Short with the installed Skill at /home/runner/w/svd/skills/directing-stickman-videos (read its SKILL.md, then the references it routes you to). Work non-interactively in this CI environment; ask no questions.
+
+          Assignment: a stickman explainer Short of 45-58 seconds when narrated at a natural pace (never exceed 60 seconds), style ${STYLE}, native 9:16 portrait, English, on this topic: "${TOPIC}"
+
+          Hard constraints (these override any Skill suggestion):
+          - Free-only: no paid or credentialed services, no API keys, no browser-driven generation, no external media downloads of unclear license.
+          - Use the B-Autopilot local renderer (scripts/autopilot.mjs and its runtime). Project folder: /home/runner/w/project (outside the Skill, as required).
+          - Narration TTS: the project's configured local route is python3 /home/runner/w/tts.py "<text>" <out.wav> [voice] (Kokoro, voices like am_michael / af_heart). Do not attempt other TTS providers. Voice cloning is forbidden.
+          - Music/SFX: only what the Skill can synthesize locally or its own bundled assets; skip anything needing downloads or licenses. If you use any CC-BY asset, its full attribution line goes into metadata.json's description.
+          - Human-approval gates: where the Skill requires a human preview or design approval that is impossible in this headless CI, proceed with the most conservative choice and record exactly which gates were bypassed in NOTES.md; never fabricate an approval or acceptance.
+          - For B5: the presenter must be a simple original geometric character authored as local SVG (no real people, no likenesses, no image-generation services); follow the style's mandatory references and keep the left-stage stickman action genuinely animated.
+          - Keep total runtime under 80 minutes of compute.
+
+          Editorial standard (the script becomes spoken narration and captions verbatim):
+          - Sentence 1 is the hook: a direct question, a surprising-but-true contrast, or a concrete relatable scenario. No clickbait lies, no fake urgency.
+          - Every factual claim must be true and widely supported. Never invent studies, names or numbers. Qualify single-study claims in a few words; distinguish "no convincing evidence" from "proven no effect".
+          - No medical advice and no self-experiment instructions, ever. For health-adjacent topics, end with what the evidence supports.
+
+          Do this:
+          1. Read SKILL.md and the references it requires for ${STYLE} (for B1/B2 portrait, include the native portrait contract). Run the style's workflow query as directed.
+          2. Write a tight script (hook first, honest claims only), then produce narration with the local TTS route.
+          3. Build the project per the Skill's B workflow and render the final MP4 with the local renderer at 9:16.
+          4. Copy the final MP4 to /home/runner/w/out/stickman.mp4.
+          5. Write /home/runner/w/out/metadata.json (valid JSON, no comments):
+             {"title": "<=90 chars, honest, specific, no ALL-CAPS, no misleading promise",
+              "description": "2-4 honest sentences about what the video explains. No sources list, no AI disclosure line - the upload script appends hashtags. Include any required asset attribution here.",
+              "hashtags": ["3-6 short relevant tags without the # symbol"]}
+          6. Write /home/runner/w/out/NOTES.md: style, script, what worked, renderer complaints, bypassed gates, render time.
+          7. If a step fails twice, simplify scope (fewer scenes) rather than retrying the same thing. Never claim success without an actual playable MP4 in /home/runner/w/out.
+          PROMPT_EOF
+          timeout 4500 opencode run -m opencode/hy4-flash-free "$(cat $HOME/w/PROMPT.md)" 2>&1 | tee $HOME/w/out/opencode.log || echo "opencode exited non-zero or timed out"
+          ls -la $HOME/w/out
+      - name: Validate video + metadata (one corrective retry)
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w
+        run: |
+          check() {
+          python3 - <<'VALID_PY'
+          import json, subprocess, sys
+          try:
+              d = float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','csv=p=0','out/stickman.mp4']).strip())
+              assert 30 <= d <= 62, 'duration %.1fs out of range 30-62' % d
+              m = json.load(open('out/metadata.json', encoding='utf-8'))
+              assert m.get('title') and len(m['title']) <= 100, 'bad title'
+              assert m.get('description'), 'missing description'
+              assert isinstance(m.get('hashtags'), list) and m['hashtags'], 'missing hashtags'
+              print('validation OK: %.1fs | %s' % (d, m['title']))
+          except Exception as e:
+              print('VALIDATION FAILED:', e)
+              sys.exit(1)
+          VALID_PY
+          }
+          if ! check; then
+            if [ -f out/stickman.mp4 ]; then
+              echo "video exists; retrying metadata only"
+              timeout 600 opencode run -m opencode/hy4-flash-free "Write /home/runner/w/out/metadata.json for the already-rendered stickman Short about $(cat $HOME/w/topic.txt). Strictly valid JSON: title <=90 honest chars, description of 2-4 honest sentences (no sources list, no AI line), hashtags array of 3-6 tags without #. Read /home/runner/w/out/NOTES.md for what the video contains." 2>&1 | tee -a $HOME/w/out/opencode.log || echo "metadata retry failed"
+            fi
+            check
+          fi
+      - name: Upload Short to YouTube (only when explicitly enabled)
+        if: steps.pick.outputs.skip != 'true' && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
+        working-directory: /home/runner/w
+        run: |
+          python3 "$GITHUB_WORKSPACE/scripts/upload_youtube.py" --file out/stickman.mp4 --metadata out/metadata.json --privacy public || echo "upload failed (see youtube_result.json)"
+      - name: Publish Reel to Instagram (only when explicitly enabled)
+        if: steps.pick.outputs.skip != 'true' && vars.IG_UPLOAD_ENABLE == 'true' && env.IG_USER_ID != '' && env.IG_ACCESS_TOKEN != ''
+        working-directory: /home/runner/w
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test -f out/stickman.mp4 || { echo "no rendered video; skipping Instagram"; exit 0; }
+          TAG="reel-stick-$(date +%Y%m%d-%H%M%S)-${{ github.run_id }}"
+          gh release create "$TAG" --repo "${{ github.repository }}" --title "Reel $TAG" --notes "Auto-hosted render for Instagram Reels publishing (Meta fetches the asset URL)." out/stickman.mp4
+          URL=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.assets[0].browser_download_url')
+          echo "hosted at: $URL"
+          python3 "$GITHUB_WORKSPACE/scripts/upload_instagram.py" --video-url "$URL" --metadata out/metadata.json || echo "instagram publish failed (see instagram_result.json)"
+      - name: Record run state in queue
+        if: steps.pick.outputs.skip != 'true' && always()
+        run: |
+          python3 - <<'STATE_PY'
+          import csv, json, os, datetime, sys
+          if not os.path.exists('/home/runner/w/topic_id.txt'):
+              print('no topic was picked; nothing to record')
+              sys.exit(0)
+          tid = open('/home/runner/w/topic_id.txt', encoding='utf-8').read().strip()
+          if tid == 'manual':
+              print('manual run; queue untouched')
+              sys.exit(0)
+          today = datetime.date.today().isoformat()
+          yt = {}
+          try:
+              yt = json.load(open('/home/runner/w/youtube_result.json'))
+          except Exception:
+              pass
+          rendered = os.path.exists('/home/runner/w/out/stickman.mp4')
+          rows = [r for r in csv.DictReader(open('stickman-topics.csv', encoding='utf-8')) if None not in r]
+          status = 'done' if rendered else 'failed'
+          for r in rows:
+              if r['id'] == tid:
+                  r['status'] = status
+                  r['finished_at'] = today
+                  r['youtube_url'] = yt.get('url', '')
+                  r['notes'] = ('uploaded ' + yt.get('status', '')) if yt else ('rendered, upload disabled' if rendered else 'render failed')
+          with open('stickman-topics.csv', 'w', newline='', encoding='utf-8') as f:
+              w = csv.DictWriter(f, fieldnames=rows[0].keys())
+              w.writeheader(); w.writerows(rows)
+          os.makedirs('state', exist_ok=True)
+          new = not os.path.exists('state/stickman-runs.csv')
+          with open('state/stickman-runs.csv', 'a', newline='', encoding='utf-8') as f:
+              w = csv.writer(f)
+              if new:
+                  w.writerow(['date', 'topic_id', 'topic', 'style', 'run_url', 'render', 'upload_status', 'youtube_url'])
+              w.writerow([today, tid, open('/home/runner/w/topic.txt', encoding='utf-8').read().strip(),
+                          open('/home/runner/w/style.txt', encoding='utf-8').read().strip(),
+                          os.environ.get('RUN_URL', ''), status, yt.get('status', 'disabled'), yt.get('url', '')])
+          print('queue updated:', tid, status)
+          STATE_PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add stickman-topics.csv state/stickman-runs.csv
+          git commit -m "stickman run: topic ${{ steps.pick.outputs.topic_id }} [skip ci]" || echo "nothing to commit"
+          git push || echo "push failed (non-fatal)"
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Open an issue when the run fails
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Stickman short run failed
+        run: |
+          existing=$(gh issue list --state open --limit 50 --json title --jq '[.[] | select(.title == env.TITLE)] | length' 2>/dev/null || echo 0)
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "$TITLE" --body "The stickman-shorts workflow failed. Run: $RUN_URL . Check the job log, fix the cause, close this issue, and re-run via workflow_dispatch if needed."
+          else
+            echo "a failure issue is already open; not duplicating"
+          fi
+      - name: Finish clock and summary
+        if: always()
+        run: |
+          if [ -f $HOME/w/out/timing.txt ]; then
+            s=$(head -1 $HOME/w/out/timing.txt | cut -d' ' -f2)
+            echo "total_seconds_since_start_step $(( $(date +%s) - s ))" >> $HOME/w/out/timing.txt
+            cat $HOME/w/out/timing.txt
+            { echo "### Stickman short run"; echo; echo "- Topic: $(cat $HOME/w/topic.txt 2>/dev/null || echo none)"; echo "- Style: $(cat $HOME/w/style.txt 2>/dev/null || echo none)"; cat $HOME/w/youtube_result.json 2>/dev/null || echo '- YouTube: upload step disabled or not run'; } >> $GITHUB_STEP_SUMMARY
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.pick.outputs.skip != 'true'
+        with:
+          name: stickman-output
+          path: /home/runner/w/out
+          retention-days: 14
