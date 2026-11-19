@@ -1,0 +1,12 @@
+id,topic,status,added_at,finished_at,youtube_url,notes
+1,Can imagining your dream life make it happen? What manifestation gets right and wrong,done,2026-11-17,2026-11-17,,Manual CI test run (pilot video)
+2,Does the placebo effect prove the mind can heal the body?,done,2026-11-17,2026-11-17,,"rendered, upload disabled"
+3,"Is the 10,000 hours rule actually true?",done,2026-11-17,2026-11-18,https://youtu.be/V3Fag8g77N0,uploaded private (upload-only test)
+4,Do we really only use 10 percent of our brains?,done,2026-11-17,2026-11-18,,"rendered, upload disabled"
+5,Why does time feel faster as you get older?,failed,2026-11-17,2026-11-19,,render failed
+6,Does multitasking make you more productive or less?,done,2026-11-17,2026-11-19,https://youtu.be/hDDXAeb7ZQQ,uploaded uploaded
+7,Is déjà vu a glitch in memory?,pending,2026-11-17,,,
+8,Does the Dunning-Kruger effect explain overconfidence?,pending,2026-11-17,,,
+9,Why do we forget why we walked into a room?,pending,2026-11-17,,,
+10,Is willpower a limited resource? The ego depletion debate,pending,2026-11-17,,,
+11,Can you actually learn while you sleep?,pending,2026-11-17,,,
