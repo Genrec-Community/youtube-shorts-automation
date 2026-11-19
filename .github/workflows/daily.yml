@@ -1,0 +1,332 @@
+name: daily-explainer
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: 'Optional: force this exact topic text instead of picking from topics.csv'
+        required: false
+        default: ''
+  # Two runs daily: ~08:47 IST (03:17 UTC) and ~19:47 IST (14:17 UTC). Off-peak minute: GitHub drops scheduled runs under load at :00/:30.
+  # Each run makes ONE video (the next pending topic) and uploads it PRIVATE when YT_UPLOAD_ENABLE=true.
+  schedule:
+    - cron: '17 3 * * *'
+    - cron: '17 14 * * *'
+permissions:
+  contents: write
+  issues: write
+concurrency:
+  group: daily-explainer
+  cancel-in-progress: false
+env:
+  YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+  YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+  YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Pick next topic from queue
+        id: pick
+        run: |
+          python3 - <<'PICK_PY'
+          import csv, os, sys
+          forced = os.environ.get('FORCED_TOPIC', '').strip()
+          rows = [r for r in csv.DictReader(open('topics.csv', encoding='utf-8')) if None not in r]
+          os.makedirs('/home/runner/w', exist_ok=True)
+          if forced:
+              open('/home/runner/w/topic.txt', 'w').write(forced + '\n')
+              open('/home/runner/w/topic_id.txt', 'w').write('manual')
+              open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=false\ntopic_id=manual\n')
+              print('Forced topic:', forced)
+              sys.exit(0)
+          closed = {r['topic'].strip().lower() for r in rows if r['status'] in ('done', 'in_progress')}
+          chosen = next((r for r in rows if r['status'] == 'pending' and r['topic'].strip().lower() not in closed), None)
+          if not chosen:
+              print('Queue empty: no pending topics. Add rows to topics.csv.')
+              open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=true\n')
+              sys.exit(0)
+          chosen['status'] = 'in_progress'
+          with open('topics.csv', 'w', newline='', encoding='utf-8') as f:
+              w = csv.DictWriter(f, fieldnames=rows[0].keys())
+              w.writeheader(); w.writerows(rows)
+          open('/home/runner/w/topic.txt', 'w').write(chosen['topic'].strip() + '\n')
+          open('/home/runner/w/topic_id.txt', 'w').write(chosen['id'])
+          open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=false\ntopic_id=%s\n' % chosen['id'])
+          print('Chosen:', chosen['id'], chosen['topic'])
+          PICK_PY
+        env:
+          FORCED_TOPIC: ${{ inputs.topic }}
+      - name: Notify when the topic queue is empty
+        if: steps.pick.outputs.skip == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: Topic queue empty - add topics to topics.csv
+        run: |
+          existing=$(gh issue list --state open --limit 50 --json title --jq '[.[] | select(.title == env.TITLE)] | length' 2>/dev/null || echo 0)
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "$TITLE" --body "The daily run found no pending topics in topics.csv, so no video was generated. Add new rows with status pending to topics.csv and the next scheduled run will pick them up. Close this issue after adding topics."
+            echo "opened queue-empty issue"
+          else
+            echo "queue-empty issue already open; not duplicating"
+          fi
+      - name: Cache npm (opencode install)
+        if: steps.pick.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-opencode-1.19.6
+      - name: Install media dependencies and OpenCode
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-core
+          npm install -g opencode-ai@1.19.6
+          mkdir -p $HOME/w/proj/public $HOME/w/proj/src $HOME/w/out
+          echo "start $(date +%s)" > $HOME/w/out/timing.txt
+          google-chrome --version; ffmpeg -version | head -1; opencode --version
+      - name: OpenCode researches the topic and writes script + metadata
+        if: steps.pick.outputs.skip != 'true'
+        id: research
+        working-directory: /home/runner/w/proj
+        run: |
+          t0=$(date +%s)
+          cat > opencode.json <<'OC_JSON'
+          {"$schema":"https://opencode.ai/config.json","model":"opencode/hy4-flash-free","permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}
+          OC_JSON
+          cat > $HOME/w/RESEARCH_PROMPT.md <<'RES_PROMPT'
+          You are preparing a ~40 second narrated vertical explainer video for YouTube.
+
+          TOPIC: see the first line of this prompt.
+
+          Do this:
+          1. Research: use the webfetch tool on 2-4 reputable sources (encyclopedias, peer-reviewed journals, universities, established publications) to ground the content. If webfetch is unavailable or fails, rely only on widely accepted textbook knowledge and mark sources as "general knowledge".
+          2. Write script.txt: 100-140 words of spoken narration, conversational, short sentences.
+             - Sentence 1 is the HOOK: it must grab attention in under 3 seconds. Use a direct question, a surprising-but-true contrast, or a concrete relatable scenario. No clickbait lies, no "you won't believe", no fake urgency.
+             - Then: the popular belief or promise around the topic -> what evidence or reasoning actually shows (one concrete, real, correctly attributed study, number or mechanism) -> what this means for the viewer in one sentence.
+             - Never tell the viewer to treat, medicate or experiment on themselves: no "try taking X", no self-tests with pills or substances, no medical advice. For health-adjacent topics, end with what the evidence supports, not an instruction.
+             - When a claim rests on one study, note its scale and limits in a few words ("one 80-person trial", "early research") and never present a single small study as settled fact; say so when a trial lacked a real control group.
+             - Distinguish "no convincing evidence" from "proven no effect": prefer "studies have not found convincing evidence that..." over categorical "X does nothing" / "X can't work", unless the scientific consensus is genuinely settled.
+             - Every factual claim must be true and widely supported. Do not invent studies, names or numbers. Use correct grammar and pluralization throughout; the script becomes on-screen captions verbatim.
+          3. Write metadata.json (valid JSON, no comments):
+             {"title": "<=90 chars, honest, specific, no ALL-CAPS, no misleading promise",
+              "description": "2-4 honest sentences about what the video explains, then a blank line, then 'Sources:' followed by the URLs actually used",
+              "hashtags": ["3-6 short relevant tags without the # symbol"]}
+          4. Write sources.txt: one actually-consulted URL per line.
+          Finish with a one-line summary of the angle you chose.
+          RES_PROMPT
+          timeout 600 opencode run -m opencode/hy4-flash-free "$(cat $HOME/w/topic.txt)
+          $(cat $HOME/w/RESEARCH_PROMPT.md)" 2>&1 | tee $HOME/w/out/research.log || echo "research attempt 1 failed/timed out"
+          echo "research_step_seconds $(( $(date +%s) - t0 ))" >> $HOME/w/out/timing.txt
+      - name: Validate script and metadata (one corrective retry)
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w/proj
+        run: |
+          check() {
+          python3 - <<'VALID_PY'
+          import json, sys, re
+          try:
+              words = len(re.findall(r"\S+", open('script.txt', encoding='utf-8').read()))
+              assert 90 <= words <= 170, 'word count %s out of range 90-170' % words
+              m = json.load(open('metadata.json', encoding='utf-8'))
+              assert m.get('title') and len(m['title']) <= 100, 'bad title'
+              assert m.get('description'), 'missing description'
+              assert isinstance(m.get('hashtags'), list) and m['hashtags'], 'missing hashtags'
+              print('validation OK:', words, 'words |', m['title'])
+          except Exception as e:
+              print('VALIDATION FAILED:', e)
+              sys.exit(1)
+          VALID_PY
+          }
+          if ! check; then
+            echo "Retrying with corrective prompt"
+            timeout 420 opencode run -m opencode/hy4-flash-free "Your previous output failed validation. Rewrite script.txt to 100-140 spoken words (hook first sentence, honest claims only) and metadata.json as strictly valid JSON with title <=90 chars, description, and a hashtags array. Keep the same topic: $(cat $HOME/w/topic.txt)" 2>&1 | tee -a $HOME/w/out/research.log || echo "retry failed"
+            check
+          fi
+      - name: Cache pip packages
+        if: steps.pick.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-video-deps-v2
+      - name: Cache Kokoro model files
+        if: steps.pick.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/w/kokoro.onnx
+            /home/runner/w/voices.bin
+          key: kokoro-model-files-v1.0
+      - name: Narration (Kokoro-82M ONNX), loudness normalize, word timestamps
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w
+        run: |
+          t0=$(date +%s)
+          pip install kokoro-onnx==0.6.1 soundfile==0.14.0 faster-whisper==1.2.1 av==17.1.0
+          [ -s kokoro.onnx ] || curl -fsSL -o kokoro.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+          [ -s voices.bin ] || curl -fsSL -o voices.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+          python3 - <<'NARR_PY'
+          import soundfile as sf
+          from kokoro_onnx import Kokoro
+          k = Kokoro('kokoro.onnx', 'voices.bin')
+          s, sr = k.create(open('proj/script.txt', encoding='utf-8').read(), voice='am_michael', speed=1.0, lang='en-us')
+          sf.write('proj/public/narration_raw.wav', s, sr)
+          print('raw audio seconds', len(s) / sr)
+          NARR_PY
+          ffmpeg -y -loglevel error -i proj/public/narration_raw.wav -af loudnorm=I=-15:TP=-1.5:LRA=11 proj/public/narration.wav
+          python3 - <<'WHIS_PY'
+          import json
+          from faster_whisper import WhisperModel
+          m = WhisperModel('tiny.en', compute_type='int8')
+          segs, _ = m.transcribe('proj/public/narration.wav', word_timestamps=True)
+          w = [dict(word=x.word.strip(), start=round(float(x.start), 2), end=round(float(x.end), 2)) for g in segs for x in g.words]
+          json.dump(w, open('proj/public/words.json', 'w'))
+          print('words', len(w))
+          WHIS_PY
+          cp proj/script.txt proj/metadata.json proj/sources.txt out/ 2>/dev/null || true
+          echo "narration_step_seconds $(( $(date +%s) - t0 ))" >> out/timing.txt
+      - name: Cache yt-video tools (playwright + chromium)
+        if: steps.pick.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/yt-video
+          key: yt-video-tools-v1
+      - name: Skill setup (yt-video from user's video-generation-skill repo)
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w/proj
+        run: |
+          t0=$(date +%s)
+          git clone --depth 1 https://github.com/Shyamnath-Sankar/video-generation-skill /tmp/vgs
+          mkdir -p .opencode/skills
+          cp -r /tmp/vgs/yt-video .opencode/skills/yt-video
+          STYLE_POOL="3b1b-math flat-science vox-doc bytebytego-diagram kodekloud-devops"
+          DONE_COUNT=$(grep -c ',done,' $GITHUB_WORKSPACE/topics.csv || true)
+          STYLE=$(echo $STYLE_POOL | cut -d' ' -f$(( DONE_COUNT % 5 + 1 )))
+          echo "style=$STYLE (done videos so far: $DONE_COUNT)" | tee -a $GITHUB_STEP_SUMMARY
+          cp /tmp/vgs/LICENSE ../out/yt-video-skill-LICENSE.txt 2>/dev/null || true
+          bash .opencode/skills/yt-video/scripts/setup.sh
+          python3 .opencode/skills/yt-video/scripts/short.py doctor
+          cat > $HOME/w/GEN_PROMPT.md <<'GEN_PROMPT'
+          Use the yt-video skill in .opencode/skills/yt-video (read its SKILL.md first, then the reference files it points you to) to build a YouTube Short for the fixed narration in this directory. This is CI: work non-interactively, ask no questions, make the choices given below and proceed.
+
+          Fixed inputs (do not modify or regenerate them):
+          - script.txt: the narration script (the voiceover is fixed, word for word).
+          - public/narration.wav: the narration audio (already normalized).
+          - public/words.json: array of {word,start,end} word timestamps in seconds, aligned to narration.wav.
+          - metadata.json: title/description/hashtags (context only).
+
+          Do this, in order:
+          1. Create the project: python3 .opencode/skills/yt-video/scripts/short.py init videos/daily --style STYLE_NAME --format short
+          2. Write videos/daily/script.json per the skill's page-contract reference: 4-7 scenes, format "short". Every scene's spoken line must be verbatim consecutive words from script.txt; together the scenes cover the whole script exactly once, in order. Never invent facts, numbers, names or claims; on-screen text uses only claims from script.txt and stays grammatically correct.
+          3. Voice: OmniVoice/MCP is unavailable here and voice cloning is forbidden - do NOT attempt either. Instead, for each scene, cut public/narration.wav with ffmpeg from that scene's first word start to its last word end (use public/words.json) and import the clip: python3 .opencode/skills/yt-video/scripts/import_voice.py <clip> videos/daily <scene-id> --text "<the scene's line>"
+          4. python3 .opencode/skills/yt-video/scripts/short.py timeline videos/daily
+          5. Build the page(s) per the skill's references (page-contract.md, kit-api.md, scene-patterns.md, styles/STYLE_NAME/STYLE.md). Short format only. Every visual change lands on a cue word via K.cue. Frame 0 already shows the hook. Burned-in captions per the skill's short default.
+          6. Music stays OFF (script.json music disabled). Sound effects: style default.
+          7. python3 .opencode/skills/yt-video/scripts/short.py check videos/daily (every page must PASS) and python3 .opencode/skills/yt-video/scripts/short.py stills videos/daily. Fix anything empty, clipped, overlapping, unreadable, off-style, or not on its cue word, and re-run until clean.
+          8. Do NOT render the full video; the workflow renders it next. Finish with a one-line summary.
+          GEN_PROMPT
+          sed -i "s/STYLE_NAME/$STYLE/g" $HOME/w/GEN_PROMPT.md
+          echo "scaffold_step_seconds $(( $(date +%s) - t0 ))" >> ../out/timing.txt
+      - name: OpenCode generates the video code (GLM 5.3 Flash Free)
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w/proj
+        run: |
+          t0=$(date +%s)
+          timeout 900 opencode run -m opencode/hy4-flash-free "$(cat $HOME/w/GEN_PROMPT.md)" 2>&1 | tee ../out/opencode.log || echo "opencode exited non-zero or timed out"
+          echo "opencode_step_seconds $(( $(date +%s) - t0 ))" >> ../out/timing.txt
+          ls -la videos/daily videos/daily/voice
+          test -f videos/daily/script.json && test -f videos/daily/timeline.json
+      - name: Render the vertical Short (skill build --final)
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w/proj
+        run: |
+          t0=$(date +%s)
+          timeout 1800 python3 .opencode/skills/yt-video/scripts/short.py build videos/daily --final
+          cp videos/daily/out/final.mp4 ../out/explainer_vertical.mp4
+          echo "render_step_seconds $(( $(date +%s) - t0 ))" >> ../out/timing.txt
+      - name: Upload vertical video to YouTube as PRIVATE (only when explicitly enabled)
+        if: steps.pick.outputs.skip != 'true' && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
+        working-directory: /home/runner/w
+        run: |
+          python3 "$GITHUB_WORKSPACE/scripts/upload_youtube.py" --file out/explainer_vertical.mp4 --metadata proj/metadata.json --privacy private || echo "upload failed (see youtube_result.json)"
+      - name: Record run state in queue
+        if: steps.pick.outputs.skip != 'true' && always()
+        run: |
+          python3 - <<'STATE_PY'
+          import csv, json, os, datetime
+          import sys
+          if not os.path.exists('/home/runner/w/topic_id.txt'):
+              print('no topic was picked; nothing to record')
+              sys.exit(0)
+          tid = open('/home/runner/w/topic_id.txt', encoding='utf-8').read().strip()
+          today = datetime.date.today().isoformat()
+          yt = {}
+          try:
+              yt = json.load(open('/home/runner/w/proj/youtube_result.json'))
+          except Exception:
+              pass
+          rendered = os.path.exists('/home/runner/w/out/explainer_vertical.mp4')
+          rows = [r for r in csv.DictReader(open('topics.csv', encoding='utf-8')) if None not in r]
+          status = 'done' if rendered else 'failed'
+          for r in rows:
+              if r['id'] == tid:
+                  r['status'] = status
+                  r['finished_at'] = today
+                  r['youtube_url'] = yt.get('url', '')
+                  r['notes'] = ('uploaded ' + yt.get('status', '')) if yt else ('rendered, upload disabled' if rendered else 'render failed')
+          with open('topics.csv', 'w', newline='', encoding='utf-8') as f:
+              w = csv.DictWriter(f, fieldnames=rows[0].keys())
+              w.writeheader(); w.writerows(rows)
+          os.makedirs('state', exist_ok=True)
+          new = not os.path.exists('state/runs.csv')
+          with open('state/runs.csv', 'a', newline='', encoding='utf-8') as f:
+              w = csv.writer(f)
+              if new:
+                  w.writerow(['date', 'topic_id', 'topic', 'run_url', 'render', 'upload_status', 'youtube_url'])
+              w.writerow([today, tid, open('/home/runner/w/topic.txt', encoding='utf-8').read().strip(),
+                          os.environ.get('RUN_URL', ''), status, yt.get('status', 'disabled'), yt.get('url', '')])
+          print('queue updated:', tid, status)
+          STATE_PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add topics.csv state/runs.csv
+          git commit -m "daily run: topic ${{ steps.pick.outputs.topic_id }} [skip ci]" || echo "nothing to commit"
+          git push || echo "push failed (non-fatal)"
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Open an issue when the run fails
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Daily explainer run failed
+        run: |
+          existing=$(gh issue list --state open --limit 50 --json title --jq '[.[] | select(.title == env.TITLE)] | length' 2>/dev/null || echo 0)
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "$TITLE" --body "The daily explainer workflow failed. Run: $RUN_URL . Check the job log, fix the cause, close this issue, and re-run via workflow_dispatch if needed."
+            echo "opened failure issue"
+          else
+            echo "a failure issue is already open; not duplicating"
+          fi
+      - name: Finish clock and summary
+        if: always()
+        run: |
+          if [ -f $HOME/w/out/timing.txt ]; then
+            s=$(head -1 $HOME/w/out/timing.txt | cut -d' ' -f2)
+            echo "total_seconds_since_start_step $(( $(date +%s) - s ))" >> $HOME/w/out/timing.txt
+            cat $HOME/w/out/timing.txt
+            cp $HOME/w/proj/src/*.ts* $HOME/w/out/ 2>/dev/null || true
+            { echo "### Daily explainer run"; echo; echo "- Topic: $(cat $HOME/w/topic.txt 2>/dev/null || echo none)"; echo "- Videos: $(ls $HOME/w/out/*.mp4 2>/dev/null | wc -l) rendered"; cat $HOME/w/proj/youtube_result.json 2>/dev/null || echo '- YouTube: upload step disabled or not run'; } >> $GITHUB_STEP_SUMMARY
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.pick.outputs.skip != 'true'
+        with:
+          name: daily-output
+          path: /home/runner/w/out
+          retention-days: 7
