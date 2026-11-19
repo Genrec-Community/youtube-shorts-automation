@@ -105,7 +105,7 @@ jobs:
           cd $HOME/w/svd/skills/directing-stickman-videos
           npm ci
           node scripts/autopilot.mjs doctor || true
-      - name: Cache pip + Kokoro model
+      - name: Cache pip + TTS models
         if: steps.pick.outputs.skip != 'true'
         uses: actions/cache@v4
         with:
@@ -113,23 +113,76 @@ jobs:
             ~/.cache/pip
             /home/runner/w/kokoro.onnx
             /home/runner/w/voices.bin
-          key: stickman-kokoro-v1
-      - name: Prepare local narration route (Kokoro, free)
+            /home/runner/w/tinyvoca
+          key: stickman-tts-v2
+      - name: Prepare local narration route (tiny-voca F2 default, Kokoro fallback, free)
         if: steps.pick.outputs.skip != 'true'
         run: |
-          pip install kokoro-onnx==0.6.1 soundfile==0.14.0
+          pip install kokoro-onnx==0.6.1 soundfile==0.14.0 git+https://github.com/n4ze3m/dizione
           cd $HOME/w
           [ -s kokoro.onnx ] || curl -fsSL -o kokoro.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
           [ -s voices.bin ] || curl -fsSL -o voices.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+          mkdir -p tinyvoca/phonemizer
+          [ -s tinyvoca/model.onnx ] || curl -fsSL -o tinyvoca/model.onnx https://huggingface.co/n4ze3m/tiny-voca/resolve/main/onnx/model.onnx
+          [ -s tinyvoca/config.json ] || curl -fsSL -o tinyvoca/config.json https://huggingface.co/n4ze3m/tiny-voca/resolve/main/config.json
+          for f in align.json g2p.json g2p.npz homographs.json lexicon.json lexicon.tsv sources.json; do
+            [ -s "tinyvoca/phonemizer/$f" ] || curl -fsSL -o "tinyvoca/phonemizer/$f" "https://huggingface.co/n4ze3m/tiny-voca/resolve/main/phonemizer/$f"
+          done
           cat > $HOME/w/tts.py <<'TTS_PY'
-          import sys, soundfile as sf
-          from kokoro_onnx import Kokoro
-          k = Kokoro('/home/runner/w/kokoro.onnx', '/home/runner/w/voices.bin')
+          import os, re, sys
+          import numpy as np, soundfile as sf
+
+          ENGINE = os.environ.get('TTS_ENGINE', 'tinyvoca').strip().lower()
+          VOCA_DIR = os.environ.get('TINYVOCA_DIR', '/home/runner/w/tinyvoca')
+          KOKORO_ONNX = os.environ.get('KOKORO_ONNX', '/home/runner/w/kokoro.onnx')
+          KOKORO_VOICES = os.environ.get('KOKORO_VOICES', '/home/runner/w/voices.bin')
+
+          def synth_kokoro(text, out, voice):
+              from kokoro_onnx import Kokoro
+              k = Kokoro(KOKORO_ONNX, KOKORO_VOICES)
+              s, sr = k.create(text, voice=voice or 'am_michael', speed=1.12, lang='en-us')
+              sf.write(out, s, sr)
+              return len(s) / sr
+
+          def synth_tinyvoca(text, out, voice):
+              os.environ.setdefault('DIZIONE_DATA', VOCA_DIR + '/phonemizer')
+              import onnxruntime as ort, dizione
+              session = ort.InferenceSession(VOCA_DIR + '/model.onnx')
+              vid = 1 if (voice or '').upper() == 'M2' else 0
+              one = lambda v: np.array([v], dtype=np.float32)
+              chunks = []
+              for part in re.split(r'(?<=[.!?])\s+', text.strip()):
+                  part = part.strip()
+                  if not part:
+                      continue
+                  if part[-1] not in '.!?':
+                      part += '.'
+                  ph = dizione.phonemize(part)
+                  audio, _ = session.run(None, {
+                      'tokens': np.array([ph.ids], dtype=np.int64),
+                      'stress': np.array([ph.stress], dtype=np.int64),
+                      'voice': np.array([vid], dtype=np.int64),
+                      'speed': one(1.0),
+                      'pitch_shift': one(0.0),
+                      'pitch_range': one(1.0),
+                  })
+                  chunks.append(audio[0])
+              if not chunks:
+                  raise SystemExit('nothing pronounceable in text')
+              wave = np.concatenate(chunks)
+              peak = float(np.abs(wave).max())
+              if peak > 0.99:
+                  wave = wave * (0.99 / peak)
+              sf.write(out, wave, 24000)
+              return len(wave) / 24000
+
           text, out = sys.argv[1], sys.argv[2]
-          voice = sys.argv[3] if len(sys.argv) > 3 else 'am_michael'
-          s, sr = k.create(text, voice=voice, speed=1.12, lang='en-us')
-          sf.write(out, s, sr)
-          print('wrote', out, len(s)/sr, 'seconds')
+          voice = sys.argv[3] if len(sys.argv) > 3 else None
+          if ENGINE == 'kokoro':
+              secs = synth_kokoro(text, out, voice)
+          else:
+              secs = synth_tinyvoca(text, out, voice or 'F2')
+          print('wrote', out, round(secs, 2), 'seconds via', ENGINE)
           TTS_PY
           python3 $HOME/w/tts.py 'Narration route check.' $HOME/w/out/tts-check.wav
       - name: OpenCode directs and renders the stickman Short (hy4-flash-free)
@@ -147,7 +200,7 @@ jobs:
           Hard constraints (these override any Skill suggestion):
           - Free-only: no paid or credentialed services, no API keys, no browser-driven generation, no external media downloads of unclear license.
           - Use the B-Autopilot local renderer (scripts/autopilot.mjs and its runtime). Project folder: /home/runner/w/project (outside the Skill, as required).
-          - Narration TTS: the project's configured local route is python3 /home/runner/w/tts.py "<text>" <out.wav> [voice] (Kokoro, voices like am_michael / af_heart). Do not attempt other TTS providers. Voice cloning is forbidden.
+          - Narration TTS: the project's configured local route is python3 /home/runner/w/tts.py "<text>" <out.wav> [voice] (tiny-voca ONNX; default voice F2, M2 also available). Do not attempt other TTS providers or engines. Voice cloning is forbidden.
           - Music/SFX: only what the Skill can synthesize locally or its own bundled assets; skip anything needing downloads or licenses. If you use any CC-BY asset, its full attribution line goes into metadata.json's description.
           - Human-approval gates: where the Skill requires a human preview or design approval that is impossible in this headless CI, proceed with the most conservative choice and record exactly which gates were bypassed in NOTES.md; never fabricate an approval or acceptance.
           - For B5: the presenter must be a simple original geometric character authored as local SVG (no real people, no likenesses, no image-generation services); follow the style's mandatory references and keep the left-stage stickman action genuinely animated.
@@ -292,3 +345,4 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
+
