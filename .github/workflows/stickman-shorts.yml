@@ -184,6 +184,21 @@ jobs:
               secs = synth_kokoro(text, out, voice)
           else:
               secs = synth_tinyvoca(text, out, voice or 'F2')
+          # Voice polish (user-requested): highpass, EQ, compressor, tighten pauses. Falls back to the raw narration if ffmpeg fails.
+          import subprocess, tempfile
+          VOICE_CHAIN = ('highpass=f=80,equalizer=f=140:t=q:w=1.2:g=3.5,equalizer=f=4500:t=q:w=1.5:g=2.5,'
+                         'acompressor=threshold=-18dB:ratio=3:attack=5:release=50,'
+                         'silenceremove=stop_periods=-1:stop_duration=0.12:stop_threshold=-45dB,alimiter=limit=0.95')
+          raw_tts = os.path.join(tempfile.gettempdir(), 'raw_tts.wav')
+          os.replace(out, raw_tts)
+          try:
+              ok = subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', raw_tts, '-af', VOICE_CHAIN, out]).returncode == 0 and sf.info(out).duration > 0.2
+          except Exception:
+              ok = False
+          if not ok:
+              print('voice filter failed, using raw narration')
+              os.replace(raw_tts, out)
+          secs = sf.info(out).duration
           print('wrote', out, round(secs, 2), 'seconds via', ENGINE)
           TTS_PY
           python3 $HOME/w/tts.py 'Narration route check.' $HOME/w/out/tts-check.wav
