@@ -103,15 +103,17 @@ jobs:
           {"$schema":"https://opencode.ai/config.json","model":"opencode/hy4-flash-free","permission":{"edit":"allow","bash":"allow","webfetch":"allow"}}
           OC_JSON
           cat > $HOME/w/RESEARCH_PROMPT.md <<'RES_PROMPT'
-          You are preparing a ~40 second narrated vertical explainer video for YouTube.
+          You are preparing a ~30-40 second narrated vertical explainer video for YouTube Shorts (ideal 28-38 seconds). The channel's retention framework lives at $GITHUB_WORKSPACE/framework.md - read it and apply its Section 2 script architecture (H.O.L.D. timeline) and Section 4 audio rules; the rules below restate the binding parts.
 
           TOPIC: see the first line of this prompt.
 
           Do this:
           1. Research: use the webfetch tool on 2-4 reputable sources (encyclopedias, peer-reviewed journals, universities, established publications) to ground the content. If webfetch is unavailable or fails, rely only on widely accepted textbook knowledge and mark sources as "general knowledge".
-          2. Write script.txt: 100-140 words of spoken narration, conversational, short sentences.
-             - Sentence 1 is the HOOK: it must grab attention in under 3 seconds. Use a direct question, a surprising-but-true contrast, or a concrete relatable scenario. No clickbait lies, no "you won't believe", no fake urgency.
-             - Then: the popular belief or promise around the topic -> what evidence or reasoning actually shows (one concrete, real, correctly attributed study, number or mechanism) -> what this means for the viewer in one sentence.
+          2. Write script.txt: 75-95 words of spoken narration, conversational, short sentences, structured as the H.O.L.D. timeline:
+             - Sentence 1 is the HOOK (max 12 words): a bold claim, a second-person sensory scenario, or an outcome-first contradiction that grabs attention in under 3 seconds. NEVER start with "Did you know", "Here is why", or a generic textbook question. No clickbait lies, no "you won't believe", no fake urgency.
+             - Sentences 2-3 open a loop: widen the curiosity gap and set stakes without giving away the final answer. Cut all filler, greetings and throat-clearing (cutting filler never means cutting evidence caveats).
+             - Middle: the popular belief or promise around the topic -> what evidence or reasoning actually shows (one concrete, real, correctly attributed study, number or mechanism) -> what this means for the viewer. ONE idea per Short. Link beats with causal connectors ("However...", "Because of this...", "Which triggers...") instead of "And then...".
+             - Ending: deliver the core insight in the final ~3 seconds, and write the final clause so it grammatically flows back into the opening hook sentence (seamless loop for rewatches). NEVER use wrap-up phrases ("That's the honest answer", "Thanks for watching", "Subscribe" etc.).
              - Never tell the viewer to treat, medicate or experiment on themselves: no "try taking X", no self-tests with pills or substances, no medical advice. For health-adjacent topics, end with what the evidence supports, not an instruction.
              - When a claim rests on one study, note its scale and limits in a few words ("one 80-person trial", "early research") and never present a single small study as settled fact; say so when a trial lacked a real control group.
              - Distinguish "no convincing evidence" from "proven no effect": prefer "studies have not found convincing evidence that..." over categorical "X does nothing" / "X can't work", unless the scientific consensus is genuinely settled.
@@ -135,7 +137,7 @@ jobs:
           import json, sys, re
           try:
               words = len(re.findall(r"\S+", open('script.txt', encoding='utf-8').read()))
-              assert 90 <= words <= 170, 'word count %s out of range 90-170' % words
+              assert 70 <= words <= 110, 'word count %s out of range 70-110' % words
               m = json.load(open('metadata.json', encoding='utf-8'))
               assert m.get('title') and len(m['title']) <= 100, 'bad title'
               assert m.get('description'), 'missing description'
@@ -148,7 +150,7 @@ jobs:
           }
           if ! check; then
             echo "Retrying with corrective prompt"
-            timeout 420 opencode run -m opencode/hy4-flash-free "Your previous output failed validation. Rewrite script.txt to 100-140 spoken words (hook first sentence, honest claims only) and metadata.json as strictly valid JSON with title <=90 chars, description, and a hashtags array. Keep the same topic: $(cat $HOME/w/topic.txt)" 2>&1 | tee -a $HOME/w/out/research.log || echo "retry failed"
+            timeout 420 opencode run -m opencode/hy4-flash-free "Your previous output failed validation. Rewrite script.txt to 75-95 spoken words (12-word hook first, causal connectors, loop-back ending, honest claims only) and metadata.json as strictly valid JSON with title <=90 chars, description, and a hashtags array. Keep the same topic: $(cat $HOME/w/topic.txt)" 2>&1 | tee -a $HOME/w/out/research.log || echo "retry failed"
             check
           fi
       - name: Cache pip packages
@@ -177,7 +179,7 @@ jobs:
           import soundfile as sf
           from kokoro_onnx import Kokoro
           k = Kokoro('kokoro.onnx', 'voices.bin')
-          s, sr = k.create(open('proj/script.txt', encoding='utf-8').read(), voice='am_michael', speed=1.0, lang='en-us')
+          s, sr = k.create(open('proj/script.txt', encoding='utf-8').read(), voice='am_michael', speed=1.12, lang='en-us')
           sf.write('proj/public/narration_raw.wav', s, sr)
           print('raw audio seconds', len(s) / sr)
           NARR_PY
