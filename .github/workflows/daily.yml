@@ -158,29 +158,62 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-video-deps-v2
-      - name: Cache Kokoro model files
+      - name: Cache TTS model files (tiny-voca + Kokoro fallback)
         if: steps.pick.outputs.skip != 'true'
         uses: actions/cache@v4
         with:
           path: |
             /home/runner/w/kokoro.onnx
             /home/runner/w/voices.bin
-          key: kokoro-model-files-v1.0
-      - name: Narration (Kokoro-82M ONNX), loudness normalize, word timestamps
+            /home/runner/w/tinyvoca
+          key: tts-model-files-v2
+      - name: Narration (tiny-voca F2 ONNX; Kokoro fallback retained), loudness normalize, word timestamps
         if: steps.pick.outputs.skip != 'true'
         working-directory: /home/runner/w
         run: |
           t0=$(date +%s)
-          pip install kokoro-onnx==0.6.1 soundfile==0.14.0 faster-whisper==1.2.1 av==17.1.0
+          pip install kokoro-onnx==0.6.1 soundfile==0.14.0 faster-whisper==1.2.1 av==17.1.0 git+https://github.com/n4ze3m/dizione
           [ -s kokoro.onnx ] || curl -fsSL -o kokoro.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
           [ -s voices.bin ] || curl -fsSL -o voices.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+          mkdir -p tinyvoca/phonemizer
+          [ -s tinyvoca/model.onnx ] || curl -fsSL -o tinyvoca/model.onnx https://huggingface.co/n4ze3m/tiny-voca/resolve/main/onnx/model.onnx
+          [ -s tinyvoca/config.json ] || curl -fsSL -o tinyvoca/config.json https://huggingface.co/n4ze3m/tiny-voca/resolve/main/config.json
+          for f in align.json g2p.json g2p.npz homographs.json lexicon.json lexicon.tsv sources.json; do
+            [ -s "tinyvoca/phonemizer/$f" ] || curl -fsSL -o "tinyvoca/phonemizer/$f" "https://huggingface.co/n4ze3m/tiny-voca/resolve/main/phonemizer/$f"
+          done
           python3 - <<'NARR_PY'
-          import soundfile as sf
-          from kokoro_onnx import Kokoro
-          k = Kokoro('kokoro.onnx', 'voices.bin')
-          s, sr = k.create(open('proj/script.txt', encoding='utf-8').read(), voice='am_michael', speed=1.12, lang='en-us')
-          sf.write('proj/public/narration_raw.wav', s, sr)
-          print('raw audio seconds', len(s) / sr)
+          import os, re
+          import numpy as np, soundfile as sf
+          os.environ.setdefault('DIZIONE_DATA', 'tinyvoca/phonemizer')
+          import onnxruntime as ort, dizione
+          text = open('proj/script.txt', encoding='utf-8').read()
+          session = ort.InferenceSession('tinyvoca/model.onnx')
+          one = lambda v: np.array([v], dtype=np.float32)
+          chunks = []
+          for part in re.split(r'(?<=[.!?])\s+', text.strip()):
+              part = part.strip()
+              if not part:
+                  continue
+              if part[-1] not in '.!?':
+                  part += '.'
+              ph = dizione.phonemize(part)
+              audio, _ = session.run(None, {
+                  'tokens': np.array([ph.ids], dtype=np.int64),
+                  'stress': np.array([ph.stress], dtype=np.int64),
+                  'voice': np.array([0], dtype=np.int64),
+                  'speed': one(1.0),
+                  'pitch_shift': one(0.0),
+                  'pitch_range': one(1.0),
+              })
+              chunks.append(audio[0])
+          if not chunks:
+              raise SystemExit('nothing pronounceable in script.txt')
+          wave = np.concatenate(chunks)
+          peak = float(np.abs(wave).max())
+          if peak > 0.99:
+              wave = wave * (0.99 / peak)
+          sf.write('proj/public/narration_raw.wav', wave, 24000)
+          print('raw audio seconds', len(wave) / 24000)
           NARR_PY
           ffmpeg -y -loglevel error -i proj/public/narration_raw.wav -af loudnorm=I=-15:TP=-1.5:LRA=11 proj/public/narration.wav
           python3 - <<'WHIS_PY'
@@ -345,3 +378,4 @@ jobs:
           name: daily-output
           path: /home/runner/w/out
           retention-days: 7
+
