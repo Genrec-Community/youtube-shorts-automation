@@ -38,7 +38,8 @@ def main():
     tags = meta.get("hashtags") or []
     if isinstance(tags, str):
         tags = [t.strip().lstrip("#") for t in tags.split(",") if t.strip()]
-    desc = (desc + "\n\nThis video was generated with AI (script, voiceover and visuals).").strip()
+    if tags:
+        desc = (desc + "\n\n" + " ".join("#" + t for t in tags[:15])).strip()
     try:
         tok = post_form("https://oauth2.googleapis.com/token", {
             "client_id": cid, "client_secret": secret,
