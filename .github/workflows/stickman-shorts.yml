@@ -230,7 +230,7 @@ jobs:
           - Keep total runtime under 80 minutes of compute. Do not stop to ask or to summarize before the MP4 exists: keep working with tools until it does. Use /home/runner/w/tmp for scratch files, never /tmp.
 
           Editorial standard (the script becomes spoken narration and captions verbatim):
-          - Sentence 1 is the hook: a direct question, a surprising-but-true contrast, or a concrete relatable scenario. No clickbait lies, no fake urgency.
+          - Never assume the viewer knows the topic's key term. Sentence 1 (max 12 words) is the hook: put the viewer inside the idea with a concrete second-person scenario that embodies it (for example it starts with You are... or Imagine you...), without naming the term yet. Sentence 2 or 3 lands the name plainly (for example: That is hedonism.) with a one-line plain meaning, and everything after builds from there. The hook is never a definition or a dictionary line. No clickbait lies, no fake urgency.
           - Every factual claim must be true and widely supported. Never invent studies, names or numbers. Qualify single-study claims in a few words; distinguish "no convincing evidence" from "proven no effect".
           - Religion, culture and living traditions: describe beliefs as beliefs ("followers believe..."), no mockery or satire of any faith, no deity or sacred figure depicted as a character or caricature, no invented doctrines, dates or numbers.
           - No medical advice and no self-experiment instructions, ever. For health-adjacent topics, end with what the evidence supports.
