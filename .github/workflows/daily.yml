@@ -118,7 +118,7 @@ jobs:
              - Every factual claim must be true and widely supported. Do not invent studies, names or numbers. Use correct grammar and pluralization throughout; the script becomes on-screen captions verbatim.
           3. Write metadata.json (valid JSON, no comments):
              {"title": "<=90 chars, honest, specific, no ALL-CAPS, no misleading promise",
-              "description": "2-4 honest sentences about what the video explains, then a blank line, then 'Sources:' followed by the URLs actually used",
+              "description": "2-4 honest sentences about what the video explains. No sources list, no AI disclosure line - the upload script appends hashtags",
               "hashtags": ["3-6 short relevant tags without the # symbol"]}
           4. Write sources.txt: one actually-consulted URL per line.
           Finish with a one-line summary of the angle you chose.
