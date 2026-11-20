@@ -117,7 +117,7 @@ jobs:
             /home/runner/w/voices.bin
             /home/runner/w/tinyvoca
           key: stickman-tts-v2
-      - name: Prepare local narration route (tiny-voca F2 default, Kokoro fallback, free)
+      - name: Prepare local narration route (edge-tts Andrew default, tiny-voca fallback, free)
         if: steps.pick.outputs.skip != 'true'
         run: |
           pip install kokoro-onnx==0.6.1 soundfile==0.14.0 edge-tts git+https://github.com/n4ze3m/dizione
@@ -291,13 +291,14 @@ jobs:
             while kill -0 $PIPE 2>/dev/null; do
               sleep 20; NOW=$(date +%s); CUR=$(activity)
               if [ "$CUR" != "$LAST" ]; then LAST=$CUR; LASTCHG=$NOW; fi
-              if [ $((NOW-LASTCHG)) -ge $STALL ]; then echo "STALL: no activity for ${STALL}s, restarting agent"; pkill -9 -f "opencode run" || true; break; fi
+              if [ $((NOW-LASTCHG)) -ge $STALL ]; then echo "STALL: no activity for ${STALL}s, restarting agent"; echo stall >> $HOME/w/stalls.log; pkill -9 -f "opencode run" || true; break; fi
               if [ $((NOW-AT)) -ge $LIMIT ]; then echo "attempt time limit"; pkill -9 -f "opencode run" || true; break; fi
             done
             wait $PIPE 2>/dev/null || true
           }
           for i in 1 2 3 4 5 6 7 8; do
             if [ -s $HOME/w/out/stickman.mp4 ] && [ "$(ffprobe -v error -show_entries format=duration -of csv=p=0 $HOME/w/out/stickman.mp4 | cut -d. -f1)" -ge 20 ] 2>/dev/null; then echo "video present after attempt $((i-1))"; break; fi
+            [ "$(cat $HOME/w/stalls.log 2>/dev/null | wc -l)" -ge 3 ] && { echo "3 stalls: giving up fast instead of burning the budget"; break; }
             LEFT=$(( 6600 - ($(date +%s) - START) ))
             [ $LEFT -lt 300 ] && { echo "time budget used up"; break; }
             if [ $i -eq 1 ]; then
@@ -367,7 +368,7 @@ jobs:
         if: steps.pick.outputs.skip != 'true' && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
         working-directory: /home/runner/w
         run: |
-          python3 "$GITHUB_WORKSPACE/scripts/upload_youtube.py" --file out/stickman.mp4 --metadata out/metadata.json --privacy public || echo "upload failed (see youtube_result.json)"
+          python3 "$GITHUB_WORKSPACE/scripts/upload_youtube.py" --file out/stickman.mp4 --metadata out/metadata.json --privacy public || { echo "upload failed (see out/youtube_result.json)"; echo failed > /home/runner/w/upload_failed.flag; exit 1; }
       - name: Publish Reel to Instagram (only when explicitly enabled)
         if: steps.pick.outputs.skip != 'true' && vars.IG_UPLOAD_ENABLE == 'true' && env.IG_USER_ID != '' && env.IG_ACCESS_TOKEN != ''
         working-directory: /home/runner/w
@@ -395,18 +396,39 @@ jobs:
           today = datetime.date.today().isoformat()
           yt = {}
           try:
-              yt = json.load(open('/home/runner/w/youtube_result.json'))
+              yt = json.load(open('/home/runner/w/out/youtube_result.json'))
           except Exception:
               pass
           rendered = os.path.exists('/home/runner/w/out/stickman.mp4')
           rows = [r for r in csv.DictReader(open('stickman-topics.csv', encoding='utf-8')) if None not in r]
-          status = 'done' if rendered else 'failed'
+          job_ok = os.environ.get('JOB_STATUS', '') == 'success'
+          upload_failed = os.path.exists('/home/runner/w/upload_failed.flag')
+          if rendered and upload_failed:
+              status = 'upload_failed'
+          elif rendered and job_ok:
+              status = 'done'
+          else:
+              status = 'failed'
+          final_status = status
           for r in rows:
               if r['id'] == tid:
-                  r['status'] = status
-                  r['finished_at'] = today
-                  r['youtube_url'] = yt.get('url', '')
-                  r['notes'] = ('uploaded ' + yt.get('status', '')) if yt else ('rendered, upload disabled' if rendered else 'render failed')
+                  prev = (r.get('notes') or '')
+                  if status == 'failed' and not prev.startswith('retry-1'):
+                      r['status'] = 'pending'
+                      r['finished_at'] = ''
+                      r['youtube_url'] = ''
+                      r['notes'] = 'retry-1: run %s failed (no valid video)' % os.environ.get('RUN_ID', '')
+                      final_status = 'failed (requeued once)'
+                  else:
+                      r['status'] = status
+                      r['finished_at'] = today
+                      r['youtube_url'] = yt.get('url', '')
+                      if status == 'upload_failed':
+                          r['notes'] = 'rendered, upload failed (video in artifact stickman-output of run %s)' % os.environ.get('RUN_ID', '')
+                      elif status == 'failed':
+                          r['notes'] = 'failed twice, not requeued'
+                      else:
+                          r['notes'] = ('uploaded ' + yt.get('status', '') + (' ' + yt.get('privacy', '') if yt.get('privacy') else '')) if yt else 'rendered, no upload result'
           with open('stickman-topics.csv', 'w', newline='', encoding='utf-8') as f:
               w = csv.DictWriter(f, fieldnames=rows[0].keys())
               w.writeheader(); w.writerows(rows)
@@ -418,23 +440,25 @@ jobs:
                   w.writerow(['date', 'topic_id', 'topic', 'style', 'run_url', 'render', 'upload_status', 'youtube_url'])
               w.writerow([today, tid, open('/home/runner/w/topic.txt', encoding='utf-8').read().strip(),
                           open('/home/runner/w/style.txt', encoding='utf-8').read().strip(),
-                          os.environ.get('RUN_URL', ''), status, yt.get('status', 'disabled'), yt.get('url', '')])
-          print('queue updated:', tid, status)
+                          os.environ.get('RUN_URL', ''), final_status, yt.get('status', 'disabled'), yt.get('url', '')])
+          print('queue updated:', tid, final_status)
           STATE_PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add stickman-topics.csv || true
           [ -f state/stickman-runs.csv ] && git add state/stickman-runs.csv || true
           git commit -m "stickman run: topic ${{ steps.pick.outputs.topic_id }} [skip ci]" || echo "nothing to commit"
-          git push || echo "push failed (non-fatal)"
+          for i in 1 2 3; do git pull --rebase --autostash -q origin main && git push && break || { echo "push attempt $i failed"; sleep 5; }; done
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
       - name: Open an issue when the run fails
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TITLE: Stickman short run failed
+          TITLE: Stickman short run failed (run #${{ github.run_number }})
         run: |
           existing=$(gh issue list --state open --limit 50 --json title --jq '[.[] | select(.title == env.TITLE)] | length' 2>/dev/null || echo 0)
           if [ "$existing" = "0" ]; then
@@ -449,7 +473,7 @@ jobs:
             s=$(head -1 $HOME/w/out/timing.txt | cut -d' ' -f2)
             echo "total_seconds_since_start_step $(( $(date +%s) - s ))" >> $HOME/w/out/timing.txt
             cat $HOME/w/out/timing.txt
-            { echo "### Stickman short run"; echo; echo "- Topic: $(cat $HOME/w/topic.txt 2>/dev/null || echo none)"; echo "- Style: $(cat $HOME/w/style.txt 2>/dev/null || echo none)"; cat $HOME/w/youtube_result.json 2>/dev/null || echo '- YouTube: upload step disabled or not run'; } >> $GITHUB_STEP_SUMMARY
+            { echo "### Stickman short run"; echo; echo "- Topic: $(cat $HOME/w/topic.txt 2>/dev/null || echo none)"; echo "- Style: $(cat $HOME/w/style.txt 2>/dev/null || echo none)"; cat $HOME/w/out/youtube_result.json 2>/dev/null || echo '- YouTube: upload step disabled or not run'; } >> $GITHUB_STEP_SUMMARY
           fi
       - uses: actions/upload-artifact@v4
         if: always() && steps.pick.outputs.skip != 'true'
@@ -457,5 +481,6 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
+
 
 
