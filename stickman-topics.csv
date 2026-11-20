@@ -4,29 +4,29 @@ s1,What happens in your body when you get scared?,B5,done,2026-11-19,https://you
 s2,Why do we yawn and why is it contagious?,B7,done,2026-11-20,https://youtu.be/LqNolUteahY,rendered and uploaded public (run 44666688462)
 s3,How does your stomach digest food?,A5,done,2026-11-20,https://youtu.be/-aDSbTxMRzw,"rendered, upload disabled"
 s4,Why do we hiccup?,B7,done,2026-11-20,https://youtu.be/hjY7rMqwxlU,rendered and uploaded public
-s5,Why is the ocean salty?,A5,pending,,,
-s6,What is the Doppler effect?,B7,pending,,,
-s7,Why do we see colors?,H1,pending,,,
-s8,How does noise cancellation work?,A5,pending,,,
-s9,What is inflation honestly?,B7,pending,,,
-s10,The Monty Hall problem,H1,pending,,,user list #1. Title card: THE 3-DOOR TRAP. Suggested hook: Imagine you're on a game show staring at three closed doors.
-s11,The penny doubling trap (exponential growth),A5,pending,,,user list 2 #1. Title card: $0.01 OR $1000000? Suggested hook: Imagine someone offers you one million dollars now or a magic penny that doubles every day for thirty days.
-s12,The birthday paradox,B7,pending,,,user list #6. Title card: THE 23-PERSON GLITCH. Suggested hook: You're standing in a room with just 22 other strangers and someone bets you two share a birthday.
-s13,The St. Petersburg paradox,H1,pending,,,user list 2 #2. Title card: THE $100000 COIN FLIP. Suggested hook: You walk into a casino where the prize doubles every time a coin lands heads.
-s14,The bystander effect,A5,pending,,,user list #2. Title card: THE CROWD TRAP. Suggested hook: You're lying injured on a busy sidewalk and nobody stops.
-s15,The dollar auction trap (sunk cost escalation),B7,pending,,,user list 2 #3. Title card: HOW TO LOSE $100 ON $1. Suggested hook: Imagine an auctioneer holds up a one-dollar bill and two bidders end up paying over a hundred dollars for it.
-s16,The Fermi paradox,H1,pending,,,user list #3. Title card: WHERE IS EVERYONE? Suggested hook: Imagine walking into a fully lit mansion with warm dinner on the table and a dead silent house.
-s17,The Rule of 72 (compound interest),A5,pending,,,user list 2 #4. Title card: THE $10 TO $100K FORMULA. Suggested hook: You're staring at ten dollars wondering how long compound interest takes to make it a hundred thousand. Educational only: no investing advice or promised returns.
-s18,The Baader-Meinhof phenomenon (frequency illusion),B7,pending,,,user list #4. Title card: THE FREQUENCY ILLUSION. Suggested hook: You learn a bizarre new word at breakfast and hear it three times by dinner.
-s19,The anchoring effect,H1,pending,,,user list 2 #5. Title card: THE $10000 MENU TRICK. Suggested hook: You walk into a restaurant planning to spend twenty dollars until you see a five-hundred-dollar steak. Do not name companies as users of the trick unless verifiable.
-s20,The Ship of Theseus,A5,pending,,,user list #5. Title card: ARE YOU STILL YOU? Suggested hook: Imagine you replace every plank of your boat one by one until none of the original wood remains.
-s21,The cobra effect (perverse incentives),B7,pending,,,user list 2 #6. Title card: WHEN BOUNTIES BACKFIRE. Suggested hook: Imagine a city pays a reward for every dead cobra and accidentally creates secret snake farms. The Delhi story is often told as history but is disputed: say so.
-s22,The Dunning-Kruger effect,H1,pending,,,user list #7. Title card: THE CONFIDENCE TRAP. Suggested hook: Imagine someone with zero medical training arguing with a heart surgeon. Needs honest caveats on how contested the finding is.
-s23,The ultimatum game,A5,pending,,,user list 2 #7. Title card: FREE MONEY YOU'LL REJECT. Suggested hook: A stranger must split ten thousand dollars with you and if you refuse nobody gets anything.
-s24,The prisoner's dilemma,B7,pending,,,user list #8. Title card: THE BETRAYAL GAME. Suggested hook: You and your partner are in separate interrogation rooms and the detective offers you both a deal.
-s25,Survivorship bias (the dropout millionaire myth),H1,pending,,,user list 2 #8. Title card: THE BILLIONAIRE ILLUSION. Suggested hook: You see three billionaire dropouts on magazine covers and assume quitting school is the secret. No invented failure counts and no advice to quit or stay in school.
-s26,The Streisand effect,A5,pending,,,user list #9. Title card: THE SECRECY BACKFIRE. Suggested hook: What if trying to delete one embarrassing photo made ten million people look at it?
-s27,The Lindy effect,B7,pending,,,user list 2 #9. Title card: WHY OLD THINGS WIN. Suggested hook: Imagine betting on whether a viral app or a two-thousand-year-old book is still around in fifty years. Present as a rule of thumb not a law.
-s28,Zeno's dichotomy paradox,H1,pending,,,user list #10. Title card: THE INFINITE HALF. Suggested hook: You're ten feet from a doorway but mathematically you can never reach it.
-s29,The pigeonhole principle,A5,pending,,,user list 2 #10. Title card: THE IMPOSSIBLE GUARANTEE. Suggested hook: You're in a crowd of ten million people and someone bets that two strangers have the same number of hairs. Use only counts that can be verified.
+s5,Why is the ocean salty?,AUTO,pending,,,
+s6,What is the Doppler effect?,AUTO,pending,,,
+s7,Why do we see colors?,AUTO,pending,,,
+s8,How does noise cancellation work?,AUTO,pending,,,
+s9,What is inflation honestly?,AUTO,pending,,,
+s10,The Monty Hall problem,AUTO,pending,,,user list #1. Title card: THE 3-DOOR TRAP. Suggested hook: Imagine you're on a game show staring at three closed doors.
+s11,The penny doubling trap (exponential growth),AUTO,pending,,,user list 2 #1. Title card: $0.01 OR $1000000? Suggested hook: Imagine someone offers you one million dollars now or a magic penny that doubles every day for thirty days.
+s12,The birthday paradox,AUTO,pending,,,user list #6. Title card: THE 23-PERSON GLITCH. Suggested hook: You're standing in a room with just 22 other strangers and someone bets you two share a birthday.
+s13,The St. Petersburg paradox,AUTO,pending,,,user list 2 #2. Title card: THE $100000 COIN FLIP. Suggested hook: You walk into a casino where the prize doubles every time a coin lands heads.
+s14,The bystander effect,AUTO,pending,,,user list #2. Title card: THE CROWD TRAP. Suggested hook: You're lying injured on a busy sidewalk and nobody stops.
+s15,The dollar auction trap (sunk cost escalation),AUTO,pending,,,user list 2 #3. Title card: HOW TO LOSE $100 ON $1. Suggested hook: Imagine an auctioneer holds up a one-dollar bill and two bidders end up paying over a hundred dollars for it.
+s16,The Fermi paradox,AUTO,pending,,,user list #3. Title card: WHERE IS EVERYONE? Suggested hook: Imagine walking into a fully lit mansion with warm dinner on the table and a dead silent house.
+s17,The Rule of 72 (compound interest),AUTO,pending,,,user list 2 #4. Title card: THE $10 TO $100K FORMULA. Suggested hook: You're staring at ten dollars wondering how long compound interest takes to make it a hundred thousand. Educational only: no investing advice or promised returns.
+s18,The Baader-Meinhof phenomenon (frequency illusion),AUTO,pending,,,user list #4. Title card: THE FREQUENCY ILLUSION. Suggested hook: You learn a bizarre new word at breakfast and hear it three times by dinner.
+s19,The anchoring effect,AUTO,pending,,,user list 2 #5. Title card: THE $10000 MENU TRICK. Suggested hook: You walk into a restaurant planning to spend twenty dollars until you see a five-hundred-dollar steak. Do not name companies as users of the trick unless verifiable.
+s20,The Ship of Theseus,AUTO,pending,,,user list #5. Title card: ARE YOU STILL YOU? Suggested hook: Imagine you replace every plank of your boat one by one until none of the original wood remains.
+s21,The cobra effect (perverse incentives),AUTO,pending,,,user list 2 #6. Title card: WHEN BOUNTIES BACKFIRE. Suggested hook: Imagine a city pays a reward for every dead cobra and accidentally creates secret snake farms. The Delhi story is often told as history but is disputed: say so.
+s22,The Dunning-Kruger effect,AUTO,pending,,,user list #7. Title card: THE CONFIDENCE TRAP. Suggested hook: Imagine someone with zero medical training arguing with a heart surgeon. Needs honest caveats on how contested the finding is.
+s23,The ultimatum game,AUTO,pending,,,user list 2 #7. Title card: FREE MONEY YOU'LL REJECT. Suggested hook: A stranger must split ten thousand dollars with you and if you refuse nobody gets anything.
+s24,The prisoner's dilemma,AUTO,pending,,,user list #8. Title card: THE BETRAYAL GAME. Suggested hook: You and your partner are in separate interrogation rooms and the detective offers you both a deal.
+s25,Survivorship bias (the dropout millionaire myth),AUTO,pending,,,user list 2 #8. Title card: THE BILLIONAIRE ILLUSION. Suggested hook: You see three billionaire dropouts on magazine covers and assume quitting school is the secret. No invented failure counts and no advice to quit or stay in school.
+s26,The Streisand effect,AUTO,pending,,,user list #9. Title card: THE SECRECY BACKFIRE. Suggested hook: What if trying to delete one embarrassing photo made ten million people look at it?
+s27,The Lindy effect,AUTO,pending,,,user list 2 #9. Title card: WHY OLD THINGS WIN. Suggested hook: Imagine betting on whether a viral app or a two-thousand-year-old book is still around in fifty years. Present as a rule of thumb not a law.
+s28,Zeno's dichotomy paradox,AUTO,pending,,,user list #10. Title card: THE INFINITE HALF. Suggested hook: You're ten feet from a doorway but mathematically you can never reach it.
+s29,The pigeonhole principle,AUTO,pending,,,user list 2 #10. Title card: THE IMPOSSIBLE GUARANTEE. Suggested hook: You're in a crowd of ten million people and someone bets that two strangers have the same number of hairs. Use only counts that can be verified.
 
