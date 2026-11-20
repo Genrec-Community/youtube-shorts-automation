@@ -47,7 +47,7 @@ jobs:
           forced = os.environ.get('FORCED_TOPIC', '').strip()
           forced_style = (os.environ.get('FORCED_STYLE', '').strip() or 'B7').upper()
           sched = os.environ.get('SCHEDULE', '')
-          pool = {'B7', 'A5', 'H1'}
+          pool = {'B7', 'A5', 'H1', 'AUTO'}
           os.makedirs('/home/runner/w', exist_ok=True)
           if forced:
               open('/home/runner/w/topic.txt', 'w').write(forced + '\n')
@@ -100,6 +100,20 @@ jobs:
           npm install -g opencode-ai@1.19.6
           mkdir -p $HOME/w/project $HOME/w/out $HOME/w/tmp
           echo "start $(date +%s)" > $HOME/w/out/timing.txt
+      - name: Agent chooses the style for this topic (AUTO rows only)
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          cd $HOME/w
+          if [ "$(cat style.txt)" = "AUTO" ]; then
+            T="$(cat topic.txt)"; ID="$(cat topic_id.txt)"
+            rm -f choice.txt
+            P="Pick the single best visual template for a 45-second vertical explainer Short on this topic: ${T}. Options: A5 = historical cartoon (people, eras, human stories, history, society, health and the body); B7 = pixel-art theater (games, tech, process, cause and effect, small characters acting things out); H1 = Bauhaus poster motion graphics, no characters (abstract ideas, math, physics, light and sound, economics, systems, data). Write ONLY the code A5 or B7 or H1 into the file /home/runner/w/choice.txt, nothing else, then stop."
+            OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' timeout 240 opencode run -m opencode/deepseek-v4.1-flash-free "$P" || true
+            C="$(tr -dc 'A-Za-z0-9' < choice.txt 2>/dev/null | tr a-z A-Z | head -c 2)"
+            case "$C" in A5|B7|H1) echo "agent chose $C";; *) N=$(echo "$ID" | tr -dc 0-9); C=$(echo "A5 B7 H1" | cut -d' ' -f$(( (${N:-0} % 3) + 1 ))); echo "agent choice unusable, fallback by id: $C";; esac
+            echo "$C" > style.txt
+          fi
+          echo "STYLE=$(cat style.txt)"
       - name: Fetch the stickman-video-director skill
         if: steps.pick.outputs.skip != 'true'
         run: |
