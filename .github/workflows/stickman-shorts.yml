@@ -266,10 +266,14 @@ jobs:
           2. Write the script exactly per the scriptwriter skill (Part A narration and Part B beats), then produce narration with the local TTS route.
           3. Build the project per the route above and render the final MP4 with project-local code at 1080x1920 (9:16).
           4. Copy the final MP4 to /home/runner/w/out/stickman.mp4.
-          5. Write /home/runner/w/out/metadata.json (valid JSON, no comments):
-             {"title": "<=90 chars, honest, specific, no ALL-CAPS, no misleading promise",
-              "description": "2-4 honest sentences about what the video explains. No sources list, no AI disclosure line - the upload script appends hashtags. Include any required asset attribution here.",
-              "hashtags": ["3-6 short relevant tags without the # symbol"]}
+          5. Metadata: FIRST read $GITHUB_WORKSPACE/skills/youtube-shorts-metadata-generator/SKILL.md and apply it to your final Part A narration text. Write /home/runner/w/out/metadata.json (valid JSON, no comments) with these keys:
+             "title": the skill's recommended_title (under 55 characters, the curiosity hook in the first 5 words, no spoiler of the ending, no misleading promise),
+             "titles": {"option_a_curiosity": "...", "option_b_contrarian": "...", "option_c_search_hybrid": "..."},
+             "detected_concept": "official name of the concept", "primary_niche": "Psychology | Math | Philosophy | Science | Behavioral Economics",
+             "description": "per the skill: a keyword-rich hook summary of 2 sentences (25-35 words, not the raw script), then 2-3 plain honest sentences about what the video explains (total about 120-180 words), then one comment-bait question line (10-15 words). NO hashtags inside the description (the upload script appends them at the bottom). No sources list. Include any required asset attribution line here.",
+             "pinned_comment": "one second-person dilemma sentence from the script, no begging for likes or subscribers",
+             "hashtags": ["4-5 tags WITHOUT the # symbol, lowercase, must include shorts, never more than 5"]
+             Every claim in the title, description and comment must be true and supported by the script; the editorial standard above applies to metadata too (no invented facts, no medical advice, beliefs described as beliefs).
           6. Write /home/runner/w/out/NOTES.md: style, script, what worked, renderer complaints, bypassed gates, render time.
           7. If a step fails twice, simplify scope (fewer scenes) rather than retrying the same thing. Never claim success without an actual playable MP4 in /home/runner/w/out.
           PROMPT_EOF
@@ -341,6 +345,31 @@ jobs:
           except Exception as e:
               print('metadata normalize skipped:', e)
           NORM_PY
+          python3 - <<'NORM2_PY'
+          import json, re
+          # Deterministic cleanup of the metadata the agent wrote: hashtags max 5 with shorts first, no hashtags inside the description, title fallback, pinned comment kept.
+          try:
+              p = '/home/runner/w/out/metadata.json'
+              m = json.load(open(p, encoding='utf-8'))
+              tags = []
+              for t in (m.get('hashtags') or m.get('tags') or []):
+                  t = re.sub(r'[^A-Za-z0-9_]', '', str(t)).lower()
+                  if t and t not in tags:
+                      tags.append(t)
+              tags = [t for t in tags if t != 'shorts']
+              m['hashtags'] = ['shorts'] + tags[:4]
+              d = str(m.get('description') or '')
+              d = re.sub(r'[ \t]*#\w+', '', d)
+              d = re.sub(r'[ \t]+\n', '\n', d).strip()
+              m['description'] = d
+              ti = str(m.get('title') or m.get('recommended_title') or (m.get('titles') or {}).get('option_a_curiosity') or '').strip()
+              m['title'] = ti[:100]
+              m['pinned_comment'] = str(m.get('pinned_comment') or '').strip()[:500]
+              json.dump(m, open(p, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+              print('metadata normalized: title=%r hashtags=%s pinned_comment=%s' % (m['title'], m['hashtags'], 'yes' if m['pinned_comment'] else 'MISSING'))
+          except Exception as e:
+              print('metadata normalize2 skipped:', e)
+          NORM2_PY
           check() {
           python3 - <<'VALID_PY'
           import json, subprocess, sys
@@ -360,7 +389,7 @@ jobs:
           if ! check; then
             if [ -f out/stickman.mp4 ]; then
               echo "video exists; retrying metadata only"
-              OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' timeout 600 opencode run -m opencode/deepseek-v4.1-flash-free "Write /home/runner/w/out/metadata.json for the already-rendered stickman Short about $(cat $HOME/w/topic.txt). Strictly valid JSON: title <=90 honest chars, description of 2-4 honest sentences (no sources list, no AI line), hashtags array of 3-6 tags without #. Read /home/runner/w/out/NOTES.md for what the video contains." 2>&1 | tee -a $HOME/w/out/opencode.log || echo "metadata retry failed"
+              OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' timeout 600 opencode run -m opencode/deepseek-v4.1-flash-free "Write /home/runner/w/out/metadata.json for the already-rendered stickman Short about $(cat $HOME/w/topic.txt). Strictly valid JSON: follow $GITHUB_WORKSPACE/skills/youtube-shorts-metadata-generator/SKILL.md and write keys: title (the recommended pick, under 55 chars), titles (option_a_curiosity, option_b_contrarian, option_c_search_hybrid), detected_concept, primary_niche, description (skill formula, about 120-180 words, no hashtags inside, no sources list), pinned_comment (one second-person dilemma sentence), hashtags (4-5 tags without #, must include shorts). Read /home/runner/w/out/NOTES.md for what the video contains." 2>&1 | tee -a $HOME/w/out/opencode.log || echo "metadata retry failed"
             fi
             check
           fi
@@ -474,6 +503,7 @@ jobs:
             echo "total_seconds_since_start_step $(( $(date +%s) - s ))" >> $HOME/w/out/timing.txt
             cat $HOME/w/out/timing.txt
             { echo "### Stickman short run"; echo; echo "- Topic: $(cat $HOME/w/topic.txt 2>/dev/null || echo none)"; echo "- Style: $(cat $HOME/w/style.txt 2>/dev/null || echo none)"; cat $HOME/w/out/youtube_result.json 2>/dev/null || echo '- YouTube: upload step disabled or not run'; } >> $GITHUB_STEP_SUMMARY
+            jq -r '"", "- Title: " + (.title // ""), "- Title options: " + ((.titles // {}) | [.[]] | join(" | ")), "- Pinned comment text: " + (.pinned_comment // "none"), "", "Description:", (.description // ""), "", "- Hashtags: " + ((.hashtags // []) | map("#" + .) | join(" "))' $HOME/w/out/metadata.json >> $GITHUB_STEP_SUMMARY || true
           fi
       - uses: actions/upload-artifact@v4
         if: always() && steps.pick.outputs.skip != 'true'
@@ -481,6 +511,7 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
+
 
 
 
