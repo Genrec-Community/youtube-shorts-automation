@@ -47,7 +47,7 @@ jobs:
           forced = os.environ.get('FORCED_TOPIC', '').strip()
           forced_style = (os.environ.get('FORCED_STYLE', '').strip() or 'B7').upper()
           sched = os.environ.get('SCHEDULE', '')
-          pool = {'B7', 'A5'}
+          pool = {'B7', 'A5', 'H1'}
           os.makedirs('/home/runner/w', exist_ok=True)
           if forced:
               open('/home/runner/w/topic.txt', 'w').write(forced + '\n')
@@ -107,6 +107,12 @@ jobs:
           cd $HOME/w/svd/skills/directing-stickman-videos
           npm ci
           node scripts/autopilot.mjs doctor || true
+          if [ "$(cat $HOME/w/style.txt 2>/dev/null)" = "H1" ]; then
+            git clone --depth 1 https://github.com/alchaincyf/huashu-art-motion $HOME/w/hm
+            sudo apt-get install -y fonts-noto-cjk || true
+            pip install uv playwright
+            python3 -m playwright install --with-deps chromium
+          fi
       - name: Cache pip + TTS models
         if: steps.pick.outputs.skip != 'true'
         uses: actions/cache@v4
@@ -233,16 +239,19 @@ jobs:
         working-directory: /home/runner/w
         run: |
           TOPIC="$(cat $HOME/w/topic.txt)"; STYLE="$(cat $HOME/w/style.txt)"
+          SKILL_DIR=/home/runner/w/svd/skills/directing-stickman-videos; KIND="stickman explainer Short"
           case "$STYLE" in
             A5) STYLE_NAME="Style 5 Historical Cartoon (code-rendered approximation)"; STYLE_REF="references/historical-cartoon.md and references/a1-a5-direction.md (the drawing grammar and era guidance only)"
                 ROUTE="A5 is one of the Skill's A (Model Engine) styles, which normally depend on external AI video generation. That is NOT available here (free-only, headless CI). Build the video with project-local code: draw each scene as 2D vector/canvas frames at native 1080x1920 (the Skill's node runtime has @napi-rs/canvas and sharp; SVG rasterized is fine) following the style's drawing grammar (character look, palette, painted-style backgrounds, expressive simple faces, caption-safe layout), animate with real motion, mux with the narration and a locally synthesized quiet music bed, encode with ffmpeg. Render at the full 1080x1920 from the start; do not drop to 720p for speed (if it is slow, simplify scenes instead). State plainly in NOTES.md that this is a code-rendered approximation of the style, not generated video." ;;
+            H1) SKILL_DIR=/home/runner/w/hm; KIND="explainer Short with no characters (Bauhaus poster motion graphics)"; STYLE_NAME="H1 Bauhaus Poster Motion (huashu-art-motion)"; STYLE_REF="its track steps: shot list template, storyboard lint, then the engine"
+                ROUTE="H1 uses the installed huashu-art-motion skill at /home/runner/w/hm INSTEAD of the stickman Skill (ignore any mention of the stickman Skill below). Work in the skill's track: write the shot list per references/shot-list template, lock ONE visual language for the whole film (flat 1920s Bauhaus poster look: cream paper, ink-black geometry, flat red/blue/yellow accents, thick rules, no gradients, no people), run scripts/storyboard_lint.py, copy scripts/engine into the project, build about 10 custom scenes as a film folder under engine/demos/<name>/, render with: cd <project>/engine && uv run --with playwright python render.py --film demos/<name> --width 1080 --height 1920 --fps 30 --crf 16 --out /home/runner/w/tmp/silent.mp4, then mux the narration (ffmpeg, -af apad, aac) to /home/runner/w/out/stickman.mp4 and run scripts/film_gate.py on it. All on-screen text and narration are English (the skill docs are Chinese). Captions are the narration verbatim, 2-3 word or clause chunks, large and readable on a cream strip. Skill human or independent review gates cannot run headless: record them in NOTES.md as bypassed." ;;
             *) STYLE="B7"; STYLE_NAME="B7 Pixel Theater"; STYLE_REF="references/b7-pixel-theater.md, references/b7-native-portrait.md, references/b7-review.md"
                 ROUTE="B7 is a project-local code style: follow references/b7-pixel-theater.md and its 9:16 portrait contract (native 180x320 canvas enlarged 6x to 1080x1920), using the Skill's bundled pixel/ending helpers with reviewed project-local code. Inspect the bundled reference films as the reference mandates." ;;
           esac
           cat > $HOME/w/PROMPT.md <<PROMPT_EOF
-          You are producing ONE vertical YouTube Short with the installed Skill at /home/runner/w/svd/skills/directing-stickman-videos (read its SKILL.md, then the references it routes you to). Work non-interactively in this CI environment; ask no questions.
+          You are producing ONE vertical YouTube Short with the installed Skill at ${SKILL_DIR} (read its SKILL.md, then the references it routes you to). Work non-interactively in this CI environment; ask no questions.
 
-          Assignment: a stickman explainer Short of 40-52 seconds when narrated (130-150 words of narration, hard ceiling 55 seconds and 160 words), visual style: ${STYLE_NAME}, native 9:16 portrait at EXACTLY 1080x1920 pixels (never 720x1280 or any lower resolution), English, on this topic: "${TOPIC}"
+          Assignment: a ${KIND} of 40-52 seconds when narrated (130-150 words of narration, hard ceiling 55 seconds and 160 words), visual style: ${STYLE_NAME}, native 9:16 portrait at EXACTLY 1080x1920 pixels (never 720x1280 or any lower resolution), English, on this topic: "${TOPIC}"
 
           Script: FIRST read $GITHUB_WORKSPACE/skills/things-explained-scriptwriter/SKILL.md and follow it exactly. It is the channel scriptwriting skill (Scenario-First, Name-Drop, Mechanism, Loop; 130-150 words; TTS prosody rules; Part A narration text and Part B scene beats). Its structure, style and length rules win over anything else about script writing, including the older $GITHUB_WORKSPACE/framework.md (use framework.md only for its Section 4 audio and caption rules: 2-3 word caption chunks with one highlighted keyword, subtle background bed around -30dB, low-volume transition SFX). Do NOT apply framework.md Section 3 dark-canvas visual spec - the stickman styles keep their own look. The narration you synthesize must be the Part A text verbatim, and put Part A and Part B into NOTES.md. Where the skill conflicts with the editorial standard below on facts, caveats or sensitivity, the editorial standard wins.
 
@@ -511,6 +520,7 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
+
 
 
 
