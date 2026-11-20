@@ -2,11 +2,10 @@ id,topic,style,status,finished_at,youtube_url,notes
 s0,Why do we get goosebumps?,B5,done,2026-11-19,https://youtu.be/kuZps4GhRSw,from stickman-experiments run 44496733090 (validation)
 s1,What happens in your body when you get scared?,B5,done,2026-11-19,https://youtu.be/k40YB9OvptQ,run 44531125410 (in-run queue push lost race to concurrent commits; repaired manually)
 s2,Why do we yawn and why is it contagious?,B7,done,2026-11-20,https://youtu.be/LqNolUteahY,rendered and uploaded public (run 44666688462)
-s3,How does your stomach digest food?,A5,pending,,,retry after run 44709431236 hung with no agent output
+s3,How does your stomach digest food?,A5,done,2026-11-20,,"rendered, upload disabled"
 s4,Why do we hiccup?,B7,pending,,,
 s5,Why is the ocean salty?,A5,pending,,,
 s6,What is the Doppler effect?,B7,pending,,,
 s7,Why do we see colors?,A5,pending,,,
 s8,How does noise cancellation work?,B7,pending,,,
 s9,What is inflation honestly?,A5,pending,,,
-
