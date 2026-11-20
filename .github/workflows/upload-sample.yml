@@ -1,0 +1,46 @@
+name: Upload approved sample to YouTube
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: raw.githubusercontent.com/Genrec-Community URL of the mp4
+        required: true
+      metadata_url:
+        description: raw.githubusercontent.com/Genrec-Community URL of metadata.json
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: upload-sample
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    if: vars.YT_UPLOAD_ENABLE == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download sample (own org raw URLs only)
+        env:
+          V: ${{ inputs.video_url }}
+          M: ${{ inputs.metadata_url }}
+        run: |
+          P="https://raw.githubusercontent.com/Genrec-Community/"
+          case "$V" in "$P"*) ;; *) echo "video url not allowed"; exit 1;; esac
+          case "$M" in "$P"*) ;; *) echo "metadata url not allowed"; exit 1;; esac
+          mkdir -p out
+          curl -fsSL "$V" -o out/video.mp4
+          curl -fsSL "$M" -o out/metadata.json
+          ffprobe -v error -show_entries stream=width,height,duration -of csv=p=0 out/video.mp4
+      - name: Upload (public)
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python3 scripts/upload_youtube.py --file out/video.mp4 --metadata out/metadata.json --privacy public
+          cat out/youtube_result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: youtube-result
+          path: out/youtube_result.json
+
