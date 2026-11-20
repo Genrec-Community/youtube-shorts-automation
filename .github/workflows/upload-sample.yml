@@ -29,7 +29,6 @@ jobs:
           mkdir -p out
           curl -fsSL "$V" -o out/video.mp4
           curl -fsSL "$M" -o out/metadata.json
-          ffprobe -v error -show_entries stream=width,height,duration -of csv=p=0 out/video.mp4
       - name: Upload (public)
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
