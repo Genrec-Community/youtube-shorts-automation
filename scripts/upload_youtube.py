@@ -72,9 +72,32 @@ def main():
         record("failed", stage="upload", error=(str(e) + " " + e.read().decode()[:400])[:500])
         return 1
     vid = resp.get("id", "")
+    extra = {}
+    pc = (meta.get("pinned_comment") or "").strip()
+    if pc:
+        extra["pinned_comment"] = pc
+    if vid and pc and os.environ.get("YT_POST_COMMENT", "1") != "0":
+        # Best effort. The API can post a comment but cannot pin it. Needs the youtube.force-ssl scope; a failure here never fails the upload.
+        try:
+            cbody = {"snippet": {"videoId": vid, "topLevelComment": {"snippet": {"textOriginal": pc[:500]}}}}
+            creq = urllib.request.Request(
+                "https://www.googleapis.com/youtube/v3/commentThreads?part=snippet",
+                data=json.dumps(cbody).encode(), method="POST",
+                headers={"Authorization": "Bearer " + access, "Content-Type": "application/json; charset=UTF-8"})
+            with urllib.request.urlopen(creq, timeout=60) as r:
+                cr = json.loads(r.read().decode())
+            extra["comment_status"] = "posted (not pinned: pin it in YouTube Studio)"
+            extra["comment_id"] = cr.get("id", "")
+        except urllib.error.HTTPError as e:
+            extra["comment_status"] = ("not posted: HTTP %s %s" % (e.code, e.read().decode()[:200]))[:300]
+        except Exception as e:
+            extra["comment_status"] = ("not posted: " + str(e))[:300]
+    elif pc:
+        extra["comment_status"] = "not attempted"
     record("uploaded", video_id=vid, url=("https://youtu.be/" + vid) if vid else "",
-           privacy=a.privacy, title=title)
+           privacy=a.privacy, title=title, **extra)
     return 0
 
 if __name__ == "__main__":
     sys.exit(main())
+
