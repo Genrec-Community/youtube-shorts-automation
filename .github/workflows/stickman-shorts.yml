@@ -279,14 +279,31 @@ jobs:
           export OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}'
           MODEL=opencode/deepseek-v4.1-flash-free
           START=$(date +%s)
+          # Stall watchdog: kill an attempt that shows no activity (opencode.log growth or file changes under w/) for STALL seconds, so a silent hang costs minutes, not the whole budget.
+          STALL=480
+          activity() { echo "$(stat -c %s $HOME/w/out/opencode.log 2>/dev/null) $(find $HOME/w -type f -not -name agent-loop.log -printf '%T@\n' 2>/dev/null | sort -n | tail -1)"; }
+          run_oc() {
+            local LIMIT=$1; shift
+            local AT=$(date +%s) LAST NOW CUR
+            "$@" 2>&1 | tee -a $HOME/w/out/opencode.log &
+            local PIPE=$!
+            LAST=$(activity); local LASTCHG=$(date +%s)
+            while kill -0 $PIPE 2>/dev/null; do
+              sleep 20; NOW=$(date +%s); CUR=$(activity)
+              if [ "$CUR" != "$LAST" ]; then LAST=$CUR; LASTCHG=$NOW; fi
+              if [ $((NOW-LASTCHG)) -ge $STALL ]; then echo "STALL: no activity for ${STALL}s, restarting agent"; pkill -9 -f "opencode run" || true; break; fi
+              if [ $((NOW-AT)) -ge $LIMIT ]; then echo "attempt time limit"; pkill -9 -f "opencode run" || true; break; fi
+            done
+            wait $PIPE 2>/dev/null || true
+          }
           for i in 1 2 3 4 5 6 7 8; do
             if [ -s $HOME/w/out/stickman.mp4 ] && [ "$(ffprobe -v error -show_entries format=duration -of csv=p=0 $HOME/w/out/stickman.mp4 | cut -d. -f1)" -ge 20 ] 2>/dev/null; then echo "video present after attempt $((i-1))"; break; fi
             LEFT=$(( 6600 - ($(date +%s) - START) ))
             [ $LEFT -lt 300 ] && { echo "time budget used up"; break; }
             if [ $i -eq 1 ]; then
-              timeout -k 30 $LEFT opencode run -m $MODEL "$(cat $HOME/w/PROMPT.md)" 2>&1 | tee -a $HOME/w/out/opencode.log || true
+              run_oc $LEFT opencode run -m $MODEL "$(cat $HOME/w/PROMPT.md)"
             else
-              timeout -k 30 $LEFT opencode run -c -m $MODEL "You stopped before finishing. The final playable MP4 does not exist yet at /home/runner/w/out/stickman.mp4. Do not stop and do not summarize: keep calling tools until the video is rendered at 1080x1920, copied to /home/runner/w/out/stickman.mp4, and metadata.json and NOTES.md are written. Use /home/runner/w/tmp for scratch files, not /tmp. Re-read /home/runner/w/PROMPT.md if you need the full assignment." 2>&1 | tee -a $HOME/w/out/opencode.log || true
+              run_oc $LEFT opencode run -c -m $MODEL "You stopped before finishing. The final playable MP4 does not exist yet at /home/runner/w/out/stickman.mp4. Do not stop and do not summarize: keep calling tools until the video is rendered at 1080x1920, copied to /home/runner/w/out/stickman.mp4, and metadata.json and NOTES.md are written. Use /home/runner/w/tmp for scratch files, not /tmp. Re-read /home/runner/w/PROMPT.md if you need the full assignment."
             fi
           done
           echo AGENT_DONE
@@ -440,3 +457,5 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
+
+
