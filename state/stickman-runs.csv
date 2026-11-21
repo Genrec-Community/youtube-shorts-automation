@@ -6,3 +6,4 @@ date,topic_id,topic,style,run_url,render,upload_status,youtube_url
 2026-11-21,s5,Why is the ocean salty?,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44860334703,done,uploaded,https://youtu.be/55zsx4XKAPs
 2026-11-21,s11,The penny doubling trap (exponential growth),H1,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44884162697,failed (requeued once),disabled,
 2026-11-21,s7,Why do we see colors?,H1,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44903138192,failed (requeued once),disabled,
+2026-11-21,s6,What is the Doppler effect?,H1,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44921427257,done,uploaded,https://youtu.be/99JFtrt4r6w
