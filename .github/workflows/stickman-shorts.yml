@@ -108,7 +108,9 @@ jobs:
             T="$(cat topic.txt)"; ID="$(cat topic_id.txt)"
             rm -f choice.txt
             P="Pick the single best visual template for a 45-second vertical explainer Short on this topic: ${T}. Options: A5 = historical cartoon (people, eras, human stories, history, society, health and the body); B7 = pixel-art theater (games, tech, process, cause and effect, small characters acting things out); H1 = Bauhaus poster motion graphics, no characters (abstract ideas, math, physics, light and sound, economics, systems, data). Write ONLY the code A5 or B7 or H1 into the file /home/runner/w/choice.txt, nothing else, then stop."
-            OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' timeout 240 opencode run -m opencode/deepseek-v4.1-flash-free "$P" || true
+            ( OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -m opencode/deepseek-v4.1-flash-free "$P" > choose.log 2>&1 & )
+            for _ in $(seq 1 18); do [ -s choice.txt ] && break; sleep 5; done
+            sleep 2; pkill -9 -f "opencode run" || true
             C="$(tr -dc 'A-Za-z0-9' < choice.txt 2>/dev/null | tr a-z A-Z | head -c 2)"
             case "$C" in A5|B7|H1) echo "agent chose $C";; *) N=$(echo "$ID" | tr -dc 0-9); C=$(echo "A5 B7 H1" | cut -d' ' -f$(( (${N:-0} % 3) + 1 ))); echo "agent choice unusable, fallback by id: $C";; esac
             echo "$C" > style.txt
@@ -258,7 +260,7 @@ jobs:
             A5) STYLE_NAME="Style 5 Historical Cartoon (code-rendered approximation)"; STYLE_REF="references/historical-cartoon.md and references/a1-a5-direction.md (the drawing grammar and era guidance only)"
                 ROUTE="A5 is one of the Skill's A (Model Engine) styles, which normally depend on external AI video generation. That is NOT available here (free-only, headless CI). Build the video with project-local code: draw each scene as 2D vector/canvas frames at native 1080x1920 (the Skill's node runtime has @napi-rs/canvas and sharp; SVG rasterized is fine) following the style's drawing grammar (character look, palette, painted-style backgrounds, expressive simple faces, caption-safe layout), animate with real motion, mux with the narration and a locally synthesized quiet music bed, encode with ffmpeg. Render at the full 1080x1920 from the start; do not drop to 720p for speed (if it is slow, simplify scenes instead). State plainly in NOTES.md that this is a code-rendered approximation of the style, not generated video." ;;
             H1) SKILL_DIR=/home/runner/w/hm; KIND="explainer Short with no characters (Bauhaus poster motion graphics)"; STYLE_NAME="H1 Bauhaus Poster Motion (huashu-art-motion)"; STYLE_REF="its track steps: shot list template, storyboard lint, then the engine"
-                ROUTE="H1 uses the installed huashu-art-motion skill at /home/runner/w/hm INSTEAD of the stickman Skill (ignore any mention of the stickman Skill below). Work in the skill's track: write the shot list per references/shot-list template, lock ONE visual language for the whole film (flat 1920s Bauhaus poster look: cream paper, ink-black geometry, flat red/blue/yellow accents, thick rules, no gradients, no people), run scripts/storyboard_lint.py, copy scripts/engine into the project, build about 10 custom scenes as a film folder under engine/demos/<name>/, render with: cd <project>/engine && uv run --with playwright python render.py --film demos/<name> --width 1080 --height 1920 --fps 30 --crf 16 --out /home/runner/w/tmp/silent.mp4, then mux the narration (ffmpeg, -af apad, aac) to /home/runner/w/out/stickman.mp4 and run scripts/film_gate.py on it. All on-screen text and narration are English (the skill docs are Chinese). Captions are the narration verbatim, 2-3 word or clause chunks, large and readable on a cream strip. Skill human or independent review gates cannot run headless: record them in NOTES.md as bypassed." ;;
+                ROUTE="HARD ORDER OF WORK FOR H1: as soon as the narration script is final and the narration wav is measured, write /home/runner/w/out/metadata.json and /home/runner/w/out/NOTES.md (first version) BEFORE building scenes or rendering anything; update NOTES.md at the end. The skill film_gate result yellow is ACCEPTABLE: make at most ONE fix pass on its findings, then ship the video. Never tune the gate beyond that, a late video with no metadata counts as a failed run. H1 uses the installed huashu-art-motion skill at /home/runner/w/hm INSTEAD of the stickman Skill (ignore any mention of the stickman Skill below). Work in the skill's track: write the shot list per references/shot-list template, lock ONE visual language for the whole film (flat 1920s Bauhaus poster look: cream paper, ink-black geometry, flat red/blue/yellow accents, thick rules, no gradients, no people), run scripts/storyboard_lint.py, copy scripts/engine into the project, build about 10 custom scenes as a film folder under engine/demos/<name>/, render with: cd <project>/engine && uv run --with playwright python render.py --film demos/<name> --width 1080 --height 1920 --fps 30 --crf 16 --out /home/runner/w/tmp/silent.mp4, then mux the narration (ffmpeg, -af apad, aac) to /home/runner/w/out/stickman.mp4 and run scripts/film_gate.py on it. All on-screen text and narration are English (the skill docs are Chinese). Captions are the narration verbatim, 2-3 word or clause chunks, large and readable on a cream strip. Skill human or independent review gates cannot run headless: record them in NOTES.md as bypassed." ;;
             *) STYLE="B7"; STYLE_NAME="B7 Pixel Theater"; STYLE_REF="references/b7-pixel-theater.md, references/b7-native-portrait.md, references/b7-review.md"
                 ROUTE="B7 is a project-local code style: follow references/b7-pixel-theater.md and its 9:16 portrait contract (native 180x320 canvas enlarged 6x to 1080x1920), using the Skill's bundled pixel/ending helpers with reviewed project-local code. Inspect the bundled reference films as the reference mandates." ;;
           esac
@@ -412,8 +414,42 @@ jobs:
           if ! check; then
             if [ -f out/stickman.mp4 ]; then
               echo "video exists; retrying metadata only"
-              OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' timeout 600 opencode run -m opencode/deepseek-v4.1-flash-free "Write /home/runner/w/out/metadata.json for the already-rendered stickman Short about $(cat $HOME/w/topic.txt). Strictly valid JSON: follow $GITHUB_WORKSPACE/skills/youtube-shorts-metadata-generator/SKILL.md and write keys: title (the recommended pick, under 55 chars), titles (option_a_curiosity, option_b_contrarian, option_c_search_hybrid), detected_concept, primary_niche, description (skill formula, about 120-180 words, no hashtags inside, no sources list), hashtags (4-5 tags without #, must include shorts). Read /home/runner/w/out/NOTES.md for what the video contains." 2>&1 | tee -a $HOME/w/out/opencode.log || echo "metadata retry failed"
+              ( OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -m opencode/deepseek-v4.1-flash-free "Write /home/runner/w/out/metadata.json for the already-rendered stickman Short about $(cat $HOME/w/topic.txt). Strictly valid JSON: follow $GITHUB_WORKSPACE/skills/youtube-shorts-metadata-generator/SKILL.md and write keys: title (the recommended pick, under 55 chars), titles (option_a_curiosity, option_b_contrarian, option_c_search_hybrid), detected_concept, primary_niche, description (skill formula, about 120-180 words, no hashtags inside, no sources list), hashtags (4-5 tags without #, must include shorts). Read /home/runner/w/out/NOTES.md for what the video contains." >> $HOME/w/out/opencode.log 2>&1 & )
+              for _ in $(seq 1 18); do [ -s out/metadata.json ] && break; sleep 5; done
+              sleep 3; pkill -9 -f "opencode run" || true
             fi
+          python3 - <<'FALLBACK_PY'
+          import json, os, re
+          # Deterministic metadata fallback: a valid video is never lost because the agent skipped metadata.json.
+          p = '/home/runner/w/out/metadata.json'
+          ok = False
+          try:
+              m = json.load(open(p, encoding='utf-8'))
+              ok = bool(m.get('title') and m.get('description'))
+          except Exception:
+              pass
+          if not ok:
+              topic = open('/home/runner/w/topic.txt', encoding='utf-8').read().strip()
+              base = re.sub(r'\s*\(.*?\)', '', topic).strip().rstrip('?.')
+              title = base if base.lower().startswith(('why', 'how', 'what', 'can', 'is', 'does', 'do', 'the')) else 'The ' + base
+              title = title[:53].rstrip().rstrip('?') + '?'
+              narr = ''
+              for f in ('/home/runner/w/project/script.txt', '/home/runner/w/tmp/script.txt', '/home/runner/w/out/script.txt'):
+                  if os.path.exists(f):
+                      narr = open(f, encoding='utf-8', errors='ignore').read().strip()
+                      break
+              if not narr and os.path.exists('/home/runner/w/out/NOTES.md'):
+                  t = open('/home/runner/w/out/NOTES.md', encoding='utf-8', errors='ignore').read()
+                  mm = re.search(r'Part A[^\n]*\n+(.*?)(\n#|\Z)', t, re.S)
+                  narr = mm.group(1).strip() if mm else ''
+              narr = re.sub(r'\s+', ' ', narr)
+              skip = ('what', 'does', 'this', 'that', 'with', 'your', 'from', 'trap', 'honestly', 'explained')
+              words = [x for x in re.findall(r'[a-z]{4,}', base.lower()) if x not in skip]
+              tags = (['shorts'] + words[:3] + ['explained'])[:5]
+              desc = ((narr + '\n\n') if narr else (base + ' explained in under a minute.\n\n')) + 'What surprised you most about this?'
+              json.dump({'title': title, 'description': desc, 'hashtags': tags, 'detected_concept': base, 'primary_niche': 'Education', 'fallback': True}, open(p, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+              print('metadata fallback written:', title, tags)
+          FALLBACK_PY
             check
           fi
       - name: Upload Short to YouTube (only when explicitly enabled)
@@ -464,6 +500,10 @@ jobs:
           final_status = status
           for r in rows:
               if r['id'] == tid:
+                  try:
+                      r['style'] = open('/home/runner/w/style.txt', encoding='utf-8').read().strip().upper() or r['style']
+                  except Exception:
+                      pass
                   prev = (r.get('notes') or '')
                   if status == 'failed' and not prev.startswith('retry-1'):
                       r['status'] = 'pending'
@@ -534,6 +574,7 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
+
 
 
 
