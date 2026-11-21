@@ -3,3 +3,4 @@ date,topic_id,topic,style,run_url,render,upload_status,youtube_url
 2026-11-20,s3,How does your stomach digest food?,A5,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44709431236,failed,disabled,
 2026-11-20,s3,How does your stomach digest food?,A5,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44726299299,done,disabled,
 2026-11-20,s4,Why do we hiccup?,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44734512519,done,disabled,
+2026-11-21,s5,Why is the ocean salty?,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44860334703,done,uploaded,https://youtu.be/55zsx4XKAPs
