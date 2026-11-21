@@ -3,13 +3,17 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: raw.githubusercontent.com/Genrec-Community URL of the mp4
-        required: true
+        description: raw.githubusercontent.com/Genrec-Community URL of the mp4 (leave empty when artifact_run_id is set)
+        required: false
+      artifact_run_id:
+        description: Optional run id of this repo whose stickman-output artifact holds stickman.mp4
+        required: false
       metadata_url:
         description: raw.githubusercontent.com/Genrec-Community URL of metadata.json
         required: true
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: upload-sample
 jobs:
@@ -22,12 +26,20 @@ jobs:
         env:
           V: ${{ inputs.video_url }}
           M: ${{ inputs.metadata_url }}
+          RID: ${{ inputs.artifact_run_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           P="https://raw.githubusercontent.com/Genrec-Community/"
-          case "$V" in "$P"*) ;; *) echo "video url not allowed"; exit 1;; esac
           case "$M" in "$P"*) ;; *) echo "metadata url not allowed"; exit 1;; esac
-          mkdir -p out
-          curl -fsSL "$V" -o out/video.mp4
+          mkdir -p out dl
+          if [ -n "$RID" ]; then
+            case "$RID" in *[!0-9]*) echo "bad run id"; exit 1;; esac
+            gh run download "$RID" -n stickman-output -D dl
+            cp dl/stickman.mp4 out/video.mp4
+          else
+            case "$V" in "$P"*) ;; *) echo "video url not allowed"; exit 1;; esac
+            curl -fsSL "$V" -o out/video.mp4
+          fi
           curl -fsSL "$M" -o out/metadata.json
       - name: Upload (public)
         env:
