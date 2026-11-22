@@ -9,3 +9,4 @@ date,topic_id,topic,style,run_url,render,upload_status,youtube_url
 2026-11-21,s6,What is the Doppler effect?,H1,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44921427257,done,uploaded,https://youtu.be/99JFtrt4r6w
 2026-11-22,s8,How does noise cancellation work?,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/44979930959,done,uploaded,https://youtu.be/5IlYgOnZojQ
 2026-11-22,s14,The bystander effect,A5,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45002095124,failed (requeued once),disabled,
+2026-11-22,s14,The bystander effect,A5,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45021488284,done,uploaded,https://youtu.be/XyYtCUfCJ8E
