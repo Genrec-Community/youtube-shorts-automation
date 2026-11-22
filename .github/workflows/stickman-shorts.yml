@@ -264,6 +264,17 @@ jobs:
             *) STYLE="B7"; STYLE_NAME="B7 Pixel Theater"; STYLE_REF="references/b7-pixel-theater.md, references/b7-native-portrait.md, references/b7-review.md"
                 ROUTE="B7 is a project-local code style: follow references/b7-pixel-theater.md and its 9:16 portrait contract (native 180x320 canvas enlarged 6x to 1080x1920), using the Skill's bundled pixel/ending helpers with reviewed project-local code. Inspect the bundled reference films as the reference mandates." ;;
           esac
+          VARIETY=""
+          if [ "$STYLE" != "H1" ]; then
+            VARIETY=$(cat <<'VAR_EOF'
+          Visual variety contract (this overrides any Skill wording about minimalist, dark-canvas, one-room or single-scene visuals; the Scenario-First hook may open in one place, but the explanation must travel):
+          - Use at least 7 clearly different backdrops or sets (a different background, palette or composition, not just a changed prop), and change set every 4 to 6 seconds. Never hold the same background longer than 8 seconds.
+          - Show the idea literally in the world: for each mechanism step go to a new location or a cutaway view (inside the device, a street, a different room, a landscape, a diagram stage). Bring in supporting characters and props where they help. The ending may return to the opening set to close the loop.
+          - Give every beat a visual_cue that names its backdrop, and list the backdrops under a Backdrops heading in NOTES.md.
+          - Keep all style rules, caption rules and the 1080x1920 portrait contract.
+          VAR_EOF
+            )
+          fi
           cat > $HOME/w/PROMPT.md <<PROMPT_EOF
           You are producing ONE vertical YouTube Short with the installed Skill at ${SKILL_DIR} (read its SKILL.md, then the references it routes you to). Work non-interactively in this CI environment; ask no questions.
 
@@ -279,6 +290,8 @@ jobs:
           - Music/SFX: only what the Skill can synthesize locally or its own bundled assets; skip anything needing downloads or licenses. If you use any CC-BY asset, its full attribution line goes into metadata.json's description.
           - Human-approval gates: where the Skill requires a human preview or design approval that is impossible in this headless CI, proceed with the most conservative choice and record exactly which gates were bypassed in NOTES.md; never fabricate an approval or acceptance.
           - Keep total runtime under 105 minutes of compute. Do not stop to ask or to summarize before the MP4 exists: keep working with tools until it does. Use /home/runner/w/tmp for scratch files, never /tmp.
+
+          ${VARIETY}
 
           Editorial standard (the script becomes spoken narration and captions verbatim):
           - The scriptwriter skill sets the hook and structure (scenario first, name the term only after it). No clickbait lies, no fake urgency.
@@ -452,6 +465,45 @@ jobs:
           FALLBACK_PY
             check
           fi
+      - name: Variety check (a flat video gets one corrective pass)
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w
+        run: |
+          cat > variety.py <<'VPY'
+          import json, subprocess, sys
+          W, H = 32, 56
+          def measure(path):
+              raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf', 'fps=4,crop=iw:ih*0.78:0:0,scale=%d:%d:flags=area' % (W, H), '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], capture_output=True).stdout
+              n = W * H * 3
+              fr = [raw[i:i + n] for i in range(0, len(raw) - n + 1, n)]
+              cuts = [i + 1 for i in range(len(fr) - 1) if sum(abs(a - b) for a, b in zip(fr[i], fr[i + 1])) / n > 8]
+              bounds = [0] + cuts + [len(fr)]
+              longest = max((b - a) for a, b in zip(bounds, bounds[1:])) / 4.0 if len(fr) else 0
+              return {'scenes': len(cuts) + 1, 'longest_segment_s': longest, 'duration_s': len(fr) / 4.0}
+          print(json.dumps(measure(sys.argv[1])))
+          VPY
+          STYLE=$(cat style.txt)
+          python3 variety.py out/stickman.mp4 > out/variety-1.json || echo '{"scenes":99}' > out/variety-1.json
+          echo "first pass:"; cat out/variety-1.json
+          FLAT=$(python3 -c "import json;d=json.load(open('out/variety-1.json'));print(1 if d['scenes']<6 and '$STYLE'!='H1' else 0)")
+          if [ "$FLAT" = "1" ]; then
+            echo "flat video: one corrective pass"
+            cp out/stickman.mp4 out/stickman_first_pass.mp4
+            N=$(python3 -c "import json;print(json.load(open('out/variety-1.json'))['scenes'])")
+            ( timeout -k 30 1800 env OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -c -m opencode/deepseek-v4.1-flash-free "The rendered video /home/runner/w/out/stickman.mp4 is visually flat: it shows only about $N distinct backdrops and holds one set for most of the film. Do NOT change the narration or its timing. Re-render only the visuals so the film uses at least 7 clearly different backdrops or sets (different background, palette or composition) and changes set every 4 to 6 seconds, never holding one background longer than 8 seconds. For each mechanism beat go to a new location or a cutaway view, add supporting characters or props where they help, and keep all style, caption and 1080x1920 rules. Reuse the existing narration wav and mux it, write the new MP4 to /home/runner/w/out/stickman.mp4, and add a Backdrops list to NOTES.md. Do not open or view image files; check with ffprobe only. Use /home/runner/w/tmp for scratch files." > out/variety-retry.log 2>&1 || true ) 
+            pkill -9 -f "opencode run" || true
+            D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out/stickman.mp4 2>/dev/null | cut -d. -f1)
+            R=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 out/stickman.mp4 2>/dev/null)
+            python3 variety.py out/stickman.mp4 > out/variety-2.json || echo '{"scenes":0}' > out/variety-2.json
+            echo "second pass: $R ${D}s"; cat out/variety-2.json
+            KEEP=$(python3 -c "import json;a=json.load(open('out/variety-1.json'))['scenes'];b=json.load(open('out/variety-2.json'))['scenes'];print(1 if b>a and '$R'=='1080x1920' and 35<=int('${D:-0}')<=58 else 0)")
+            if [ "$KEEP" = "1" ]; then
+              echo "keeping the corrected video"; echo "NOTE: variety corrective pass applied (scenes $N -> more)" >> out/NOTES.md
+            else
+              echo "corrective pass did not improve it: restoring the first pass"; cp out/stickman_first_pass.mp4 out/stickman.mp4
+            fi
+          fi
+          python3 variety.py out/stickman.mp4 | tee out/variety-final.json
       - name: Upload Short to YouTube (only when explicitly enabled)
         if: steps.pick.outputs.skip != 'true' && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
         working-directory: /home/runner/w
@@ -574,9 +626,3 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
-
-
-
-
-
-
