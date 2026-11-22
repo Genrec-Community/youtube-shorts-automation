@@ -58,11 +58,22 @@ jobs:
               sys.exit(0)
           rows = [r for r in csv.DictReader(open('stickman-topics.csv', encoding='utf-8')) if None not in r]
           closed = {r['topic'].strip().lower() for r in rows if r['status'] in ('done', 'in_progress')}
+          # Slot-aware pick (from 2026-11-23): the IST time of the run decides the category.
+          # 'slot' column: m = morning (08:47 trigger), a = afternoon (13:47), e = evening (17:47); letters combine ('me' = morning or evening); blank = any slot.
+          # A failed topic stays pending in its own category, so a retry never shifts the other categories.
+          import datetime
+          ist = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+          mins = ist.hour * 60 + ist.minute
+          cur = 'm' if 240 <= mins < 690 else ('a' if 690 <= mins < 960 else 'e')
+          def ok_slot(r):
+              sl = (r.get('slot') or '').strip().lower()
+              return (not sl) or (cur in sl)
+          print('IST now', ist.strftime('%Y-%m-%d %H:%M'), '-> slot', cur)
           chosen = next((r for r in rows if r['status'] == 'pending' and r['style'].strip().upper() in pool
-                         and r['topic'].strip().lower() not in closed), None)
+                         and ok_slot(r) and r['topic'].strip().lower() not in closed), None)
           if not chosen:
-              print('Queue empty for style pool', sorted(pool))
-              open('/home/runner/w/pool.txt', 'w').write('-'.join(sorted(pool)))
+              print('Queue empty for slot', cur)
+              open('/home/runner/w/pool.txt', 'w').write('slot-' + cur)
               open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=true\n')
               sys.exit(0)
           chosen['status'] = 'in_progress'
@@ -85,7 +96,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           POOL=$(cat /home/runner/w/pool.txt 2>/dev/null || echo unknown)
-          TITLE="Stickman topic queue empty ($POOL) - add topics to stickman-topics.csv"
+          TITLE="Stickman topic queue empty for slot ($POOL) - add topics to stickman-topics.csv"
           existing=$(gh issue list --state open --limit 50 --json title --jq '[.[] | select(.title == env.TITLE)] | length' 2>/dev/null || echo 0)
           if [ "$existing" = "0" ]; then
             gh issue create --title "$TITLE" --body "The stickman-shorts run found no pending $POOL topics in stickman-topics.csv, so no video was generated. Add new rows with status pending and the next scheduled run will pick them up. Close this issue after adding topics."
