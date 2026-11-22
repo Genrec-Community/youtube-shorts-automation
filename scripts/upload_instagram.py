@@ -41,6 +41,46 @@ def call(method, path, data=None):
         return -1, {"error": {"type": type(e).__name__, "message": str(e)[:200].replace(TOK, "***") if TOK else str(e)[:200]}}
 
 
+IG_MAX_TAGS = 20  # Graph API allows 30 per caption; the app guidance says fewer help more, so stay at 20
+DROP_TAGS = {"shorts", "youtubeshorts", "ytshorts", "short", "fyp"}
+NEUTRAL_TAGS = ["educational", "learning", "didyouknow", "facts", "knowledge", "explained", "explainer",
+                "learnsomethingnew", "dailyfacts", "curiosity", "explainervideo", "educationalvideo",
+                "animation", "animatedexplainer", "learnontheinternet"]
+
+
+def _clean_tag(t):
+    t = "".join(ch for ch in str(t).lower().lstrip("#") if ch.isalnum())
+    return t if 2 <= len(t) <= 30 else ""
+
+
+def build_hashtags(meta):
+    """Up to IG_MAX_TAGS tags: the video's own metadata tags first (without YouTube-only ones),
+    then topic tags from metadata fields only (keywords, concept, niche), then neutral educational tags.
+    No tags are made from arbitrary title words."""
+    raw = meta.get("hashtags") or []
+    if isinstance(raw, str):
+        raw = [x for x in raw.replace("#", " ").replace(",", " ").split() if x]
+    topic = []
+    for key in ("keywords", "tags"):
+        v = meta.get(key)
+        if isinstance(v, str):
+            v = [x.strip() for x in v.split(",")]
+        if isinstance(v, list):
+            topic += [x for x in v if isinstance(x, str) and len(x.split()) <= 3]
+    for key in ("detected_concept", "primary_niche"):
+        v = meta.get(key)
+        if isinstance(v, str) and 0 < len(v.split()) <= 3:
+            topic.append(v)
+    out = []
+    for t in list(raw) + topic + NEUTRAL_TAGS:
+        c = _clean_tag(t)
+        if c and c not in DROP_TAGS and c not in out:
+            out.append(c)
+        if len(out) >= IG_MAX_TAGS:
+            break
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video-url", required=True)
@@ -77,15 +117,14 @@ def main():
         meta = json.load(open(a.metadata))
     except Exception:
         meta = {}
-    tags = meta.get("hashtags") or []
-    if isinstance(tags, str):
-        tags = [t.strip().lstrip("#") for t in tags.split(",") if t.strip()]
     base = (meta.get("title", "") + "\n\n" + meta.get("description", "")).strip()
-    # Instagram allows at most 5 hashtags per post; drop YouTube-only tags.
-    tags = [t.lstrip("#") for t in tags if t.lstrip("#").lower() not in ("shorts", "youtubeshorts", "ytshorts")][:5]
-    if tags:
-        base += "\n\n" + " ".join("#" + t for t in tags)
-    caption = (a.caption or base)[:2100]
+    tags = build_hashtags(meta)
+    tagline = " ".join("#" + t for t in tags)
+    # keep every hashtag intact: trim the text, never the tag line (caption limit 2200 characters)
+    if a.caption:
+        caption = a.caption[:2200]
+    else:
+        caption = (base[: 2190 - len(tagline) - 2].rstrip() + ("\n\n" + tagline if tagline else ""))
 
     st, cont = call("POST", f"/{uid}/media", {"media_type": "REELS", "video_url": a.video_url,
                                                "caption": caption, "share_to_feed": "true"})
@@ -112,7 +151,7 @@ def main():
     s, pl = call("GET", f"/{mid}?fields=permalink")
     if s == 200:
         permalink = pl.get("permalink", "")
-    done("published", media_id=mid, url=permalink, container_id=cid, account_id=uid)
+    done("published", media_id=mid, url=permalink, container_id=cid, account_id=uid, hashtag_count=len(tags))
 
 
 if __name__ == "__main__":
