@@ -333,18 +333,22 @@ jobs:
             while kill -0 $PIPE 2>/dev/null; do
               sleep 20; NOW=$(date +%s); CUR=$(activity)
               if [ "$CUR" != "$LAST" ]; then LAST=$CUR; LASTCHG=$NOW; fi
-              if [ $((NOW-LASTCHG)) -ge $STALL ]; then echo "STALL: no activity for ${STALL}s, restarting agent"; echo stall >> $HOME/w/stalls.log; pkill -9 -f "opencode run" || true; break; fi
+              if [ $((NOW-LASTCHG)) -ge $STALL ]; then echo "STALL: no activity for ${STALL}s, restarting agent"; echo stall >> $HOME/w/stalls.log; pkill -9 -f "opencode run" || true; echo 1 > $HOME/w/last_stalled; break; fi
               if [ $((NOW-AT)) -ge $LIMIT ]; then echo "attempt time limit"; pkill -9 -f "opencode run" || true; break; fi
             done
             wait $PIPE 2>/dev/null || true
           }
           for i in 1 2 3 4 5 6 7 8; do
             if [ -s $HOME/w/out/stickman.mp4 ] && [ "$(ffprobe -v error -show_entries format=duration -of csv=p=0 $HOME/w/out/stickman.mp4 | cut -d. -f1)" -ge 20 ] 2>/dev/null; then echo "video present after attempt $((i-1))"; break; fi
-            [ "$(cat $HOME/w/stalls.log 2>/dev/null | wc -l)" -ge 3 ] && { echo "3 stalls: giving up fast instead of burning the budget"; break; }
+            [ "$(cat $HOME/w/stalls.log 2>/dev/null | wc -l)" -ge 4 ] && { echo "4 stalls: giving up fast instead of burning the budget"; break; }
             LEFT=$(( 6600 - ($(date +%s) - START) ))
             [ $LEFT -lt 300 ] && { echo "time budget used up"; break; }
             if [ $i -eq 1 ]; then
               run_oc $LEFT opencode run -m $MODEL "$(cat $HOME/w/PROMPT.md)"
+            elif [ -f $HOME/w/last_stalled ]; then
+              # A stalled session is not resumed: replaying its long history hung every time (runs 44903138192 and 45002095124 stalled 3 times in a row). Start a fresh, small session that continues from the files on disk.
+              rm -f $HOME/w/last_stalled
+              run_oc $LEFT opencode run -m $MODEL "A previous session of this job hung before finishing. Start fresh from the files on disk, do not redo work that already exists. Read /home/runner/w/PROMPT.md for the assignment and the hard constraints (it is the full task, but skip anything already done). Then inspect /home/runner/w/project, /home/runner/w/audio, /home/runner/w/tmp and /home/runner/w/out to see what is built (narration wav, script, render.mjs, frames, scenes). Do not re-read the whole Skill and its references: open only the one or two reference files you need to finish. Do not open or view image or PNG files; verify frames only with ffmpeg and ffprobe numeric checks. Keep every command short and print little output. Finish: render the final MP4 at exactly 1080x1920 with the existing narration, copy it to /home/runner/w/out/stickman.mp4, and write metadata.json and NOTES.md as PROMPT.md describes. Keep the visual variety contract in PROMPT.md. Use /home/runner/w/tmp for scratch files, not /tmp."
             else
               run_oc $LEFT opencode run -c -m $MODEL "You stopped before finishing. The final playable MP4 does not exist yet at /home/runner/w/out/stickman.mp4. Do not stop and do not summarize: keep calling tools until the video is rendered at 1080x1920, copied to /home/runner/w/out/stickman.mp4, and metadata.json and NOTES.md are written. Use /home/runner/w/tmp for scratch files, not /tmp. Re-read /home/runner/w/PROMPT.md if you need the full assignment."
             fi
