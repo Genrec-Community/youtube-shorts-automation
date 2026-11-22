@@ -1,22 +1,45 @@
 #!/usr/bin/env python3
-"""Publish a Reel to Instagram via the Instagram Platform API (Instagram Login setup).
+"""Publish a Reel to Instagram via the Graph API (Facebook Login user token, Page-linked account).
 
-Needs env IG_USER_ID and IG_ACCESS_TOKEN (long-lived Instagram User token with
-instagram_business_basic + instagram_business_content_publish). Meta fetches the
-video from --video-url, which must be publicly reachable at publish time.
+Needs env IG_ACCESS_TOKEN (Facebook user token with instagram_basic,
+instagram_content_publish, pages_show_list, pages_read_engagement).
+Optional env IG_USER_ID (expected Instagram account id) and IG_EXPECTED_USERNAME
+(default things._.explained). The target account is resolved from /me/accounts and
+must match the expected username (and IG_USER_ID when set), otherwise nothing is
+published. Meta fetches the video from --video-url, which must be public.
 
 Usage: upload_instagram.py --video-url URL --metadata metadata.json
-Writes instagram_result.json next to the metadata file.
+Writes instagram_result.json next to the metadata file. Never prints the token.
 """
-import argparse, json, os, sys, time, urllib.parse, urllib.request
+import argparse, json, os, sys, time, urllib.parse, urllib.request, urllib.error
 
-API = "https://graph.instagram.com/v23.0"
+API = "https://graph.facebook.com/v23.0"
+TOK = os.environ.get("IG_ACCESS_TOKEN", "")
 
-def req(method, url, data=None):
-    body = urllib.parse.urlencode(data).encode() if data is not None else None
-    r = urllib.request.Request(url, data=body, method=method)
-    with urllib.request.urlopen(r, timeout=60) as resp:
-        return json.loads(resp.read().decode())
+
+def call(method, path, data=None):
+    url = API + path
+    body = None
+    if method == "GET":
+        url += ("&" if "?" in url else "?") + "access_token=" + urllib.parse.quote(TOK)
+    else:
+        d = dict(data or {})
+        d["access_token"] = TOK
+        body = urllib.parse.urlencode(d).encode()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=body, method=method), timeout=60) as r:
+            return r.status, json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.loads(e.read().decode()).get("error", {})
+        except Exception:
+            err = {}
+        return e.code, {"error": {"type": err.get("type"), "code": err.get("code"),
+                                   "subcode": err.get("error_subcode"),
+                                   "message": str(err.get("message", ""))[:300]}}
+    except Exception as e:
+        return -1, {"error": {"type": type(e).__name__, "message": str(e)[:200].replace(TOK, "***") if TOK else str(e)[:200]}}
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -24,17 +47,31 @@ def main():
     ap.add_argument("--metadata", required=True)
     ap.add_argument("--caption", default="")
     a = ap.parse_args()
-    uid = os.environ.get("IG_USER_ID", "")
-    tok = os.environ.get("IG_ACCESS_TOKEN", "")
+    expected_user = os.environ.get("IG_EXPECTED_USERNAME", "things._.explained")
+    expected_id = os.environ.get("IG_USER_ID", "").strip()
     out_path = os.path.join(os.path.dirname(os.path.abspath(a.metadata)), "instagram_result.json")
 
     def done(status, **extra):
         json.dump({"status": status, **extra}, open(out_path, "w"))
-        print("instagram:", status, extra)
-        sys.exit(0 if status in ("published",) else 1)
+        print("instagram:", status, json.dumps(extra)[:600])
+        sys.exit(0 if status == "published" else 1)
 
-    if not uid or not tok:
-        done("skipped", reason="missing IG_USER_ID or IG_ACCESS_TOKEN")
+    if not TOK:
+        done("skipped", reason="missing IG_ACCESS_TOKEN")
+
+    st, pages = call("GET", "/me/accounts?fields=name,instagram_business_account%7Bid,username%7D")
+    if st != 200:
+        err = pages.get("error", {})
+        if err.get("code") == 190:
+            done("token_invalid_or_expired", http=st, error=err)
+        done("account_lookup_failed", http=st, error=err)
+    matches = [p["instagram_business_account"] for p in pages.get("data", [])
+               if p.get("instagram_business_account", {}).get("username") == expected_user]
+    if len(matches) != 1:
+        done("account_not_found_or_ambiguous", expected=expected_user, matches=len(matches))
+    uid = matches[0]["id"]
+    if expected_id and expected_id != uid:
+        done("account_id_mismatch", expected_id=expected_id, found_id=uid)
 
     try:
         meta = json.load(open(a.metadata))
@@ -44,52 +81,39 @@ def main():
     if isinstance(tags, str):
         tags = [t.strip().lstrip("#") for t in tags.split(",") if t.strip()]
     base = (meta.get("title", "") + "\n\n" + meta.get("description", "")).strip()
+    # Instagram allows at most 5 hashtags per post; drop YouTube-only tags.
+    tags = [t.lstrip("#") for t in tags if t.lstrip("#").lower() not in ("shorts", "youtubeshorts", "ytshorts")][:5]
     if tags:
-        base += "\n\n" + " ".join("#" + t for t in tags[:15])
-    caption = a.caption or base
-    caption = caption[:2100]
+        base += "\n\n" + " ".join("#" + t for t in tags)
+    caption = (a.caption or base)[:2100]
 
-    try:
-        cont = req("POST", f"{API}/{uid}/media", {
-            "media_type": "REELS",
-            "video_url": a.video_url,
-            "caption": caption,
-            "share_to_feed": "true",
-            "access_token": tok,
-        })
-    except Exception as e:
-        done("container_failed", error=str(e)[:500])
+    st, cont = call("POST", f"/{uid}/media", {"media_type": "REELS", "video_url": a.video_url,
+                                               "caption": caption, "share_to_feed": "true"})
     cid = cont.get("id")
-    if not cid:
-        done("container_failed", response=cont)
+    if st != 200 or not cid:
+        done("container_failed", http=st, error=cont.get("error"))
 
     status = ""
     for _ in range(40):  # ~10 min max
         time.sleep(15)
-        try:
-            st = req("GET", f"{API}/{cid}?fields=status_code&access_token={urllib.parse.quote(tok)}")
-            status = st.get("status_code", "")
-        except Exception as e:
-            status = "POLL_ERROR:" + str(e)[:200]
+        s, r = call("GET", f"/{cid}?fields=status_code,status")
+        status = r.get("status_code", "") if s == 200 else "POLL_ERROR"
         print("container status:", status)
         if status in ("FINISHED", "ERROR", "EXPIRED"):
             break
     if status != "FINISHED":
         done("processing_failed", container_status=status, container_id=cid)
 
-    try:
-        pub = req("POST", f"{API}/{uid}/media_publish", {"creation_id": cid, "access_token": tok})
-    except Exception as e:
-        done("publish_failed", error=str(e)[:500], container_id=cid)
+    st, pub = call("POST", f"/{uid}/media_publish", {"creation_id": cid})
     mid = pub.get("id", "")
+    if st != 200 or not mid:
+        done("publish_failed", http=st, error=pub.get("error"), container_id=cid)
     permalink = ""
-    if mid:
-        try:
-            pl = req("GET", f"{API}/{mid}?fields=permalink&access_token={urllib.parse.quote(tok)}")
-            permalink = pl.get("permalink", "")
-        except Exception:
-            pass
-    done("published", media_id=mid, url=permalink, container_id=cid)
+    s, pl = call("GET", f"/{mid}?fields=permalink")
+    if s == 200:
+        permalink = pl.get("permalink", "")
+    done("published", media_id=mid, url=permalink, container_id=cid, account_id=uid)
+
 
 if __name__ == "__main__":
     main()
