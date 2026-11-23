@@ -13,3 +13,4 @@ date,topic_id,topic,style,run_url,render,upload_status,youtube_url
 2026-11-23,n1,Why you can sleep eight hours and still wake up groggy (sleep cycles and sleep inertia),B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45105073044,failed (requeued once),disabled,
 2026-11-23,n1,Why you can sleep eight hours and still wake up groggy (sleep cycles and sleep inertia),B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45111204981,done,uploaded,https://youtu.be/__PRr2fBXb0
 2026-11-23,b1,Opportunity cost: the hidden price of every choice,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45137392552,failed (requeued as retry-1),disabled,
+2026-11-23,n2,How to remember what you read: the study methods with the best evidence,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45172853311,failed (requeued as retry-1),disabled,
