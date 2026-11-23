@@ -1,0 +1,23 @@
+{
+  "title": "What Happens Inside a Tanker When You Brake?",
+  "titles": {
+    "option_a_curiosity": "What Happens Inside a Tanker When You Brake?",
+    "option_b_contrarian": "A Full Tanker Is Not the Safe One",
+    "option_c_search_hybrid": "Tanker Sloshing Explained: Milk vs Fuel"
+  },
+  "detected_concept": "Liquid sloshing in tankers under braking",
+  "primary_niche": "Everyday Engineering",
+  "description": "An experimental animated explainer of what happens inside a liquid tanker when the truck brakes. Cutaway views show a milk tanker and a fuel tanker: both liquids slosh, and the video walks through why baffles, tank design, braking and grip all matter.\n\nThis is an animation, not a physics simulation. It shows the idea, not exact fluid dynamics, and both liquids behave broadly similarly here.",
+  "hashtags": [
+    "shorts",
+    "tanker",
+    "trucks",
+    "braking",
+    "physics",
+    "engineering",
+    "science",
+    "animation",
+    "fluiddynamics",
+    "roadsafety"
+  ]
+}
