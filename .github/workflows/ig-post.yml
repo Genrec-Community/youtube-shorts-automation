@@ -63,7 +63,8 @@ jobs:
           URL=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.assets[0].browser_download_url')
           echo "hosted at: $URL"
           curl -sIL "$URL" | grep -iE "^HTTP|content-type|content-length" | head -6
-          python3 scripts/upload_instagram.py --video-url "$URL" --metadata out/metadata.json
+          CAPTION=$(python3 -c 'import json; print(json.load(open("out/metadata.json")).get("exact_caption", ""))')
+          python3 scripts/upload_instagram.py --video-url "$URL" --metadata out/metadata.json --caption "$CAPTION"
           cat out/instagram_result.json
       - uses: actions/upload-artifact@v4
         if: always()
