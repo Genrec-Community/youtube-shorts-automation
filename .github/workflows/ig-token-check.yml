@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+      IG_USER_ID: ${{ secrets.IG_USER_ID }}
       IG_EXPECTED_USERNAME: things._.explained
     steps:
       - name: Verify token and account linkage (prints structure only, never tokens)
@@ -23,22 +24,40 @@ jobs:
                   with urllib.request.urlopen(url, timeout=30) as r:
                       return r.status, json.loads(r.read().decode())
               except urllib.error.HTTPError as e:
-                  return e.code, {"error": json.loads(e.read().decode() or "{}").get("error", {})}
-          st, acc = get("/me/accounts?fields=name,access_token,instagram_business_account%7Bid,username%7D")
-          print("me/accounts http:", st)
+                  try:
+                      body = json.loads(e.read().decode() or "{}")
+                  except Exception:
+                      body = {}
+                  return e.code, body
+          def errline(tag, st, body):
+              err = (body or {}).get("error", {}) if isinstance(body, dict) else {}
+              print(tag, "http:", st, "| code:", err.get("code"), "| subcode:", err.get("error_subcode"),
+                    "| type:", err.get("type"), "| msg:", str(err.get("message"))[:200])
+          st, me = get("/me?fields=id,name")
+          if st == 200:
+              print("me ok | id:", me.get("id"), "| name:", me.get("name"))
+          else:
+              errline("me", st, me)
+          st, perms = get("/me/permissions")
+          if st == 200:
+              for p in perms.get("data", []):
+                  print("perm:", p.get("permission"), "=", p.get("status"))
+          else:
+              errline("permissions", st, perms)
+          igid = os.environ.get("IG_USER_ID", "").strip()
+          if igid:
+              st, igu = get("/" + igid + "?fields=id,username")
+              if st == 200:
+                  print("ig_user ok | id:", igu.get("id"), "| username:", igu.get("username"))
+              else:
+                  errline("ig_user", st, igu)
+          st, acc = get("/me/accounts?fields=name,instagram_business_account%7Bid,username%7D")
           if st == 200:
               for p in acc.get("data", []):
                   ig = p.get("instagram_business_account") or {}
-                  print("page:", p.get("name"), "| ig_username:", ig.get("username"), "| ig_id:", ig.get("id"), "| page_token_returned:", bool(p.get("access_token")))
+                  print("page:", p.get("name"), "| ig_username:", ig.get("username"), "| ig_id:", ig.get("id"))
+              if not acc.get("data"):
+                  print("me/accounts ok but EMPTY page list")
           else:
-              err = acc.get("error", {})
-              print("lookup error code:", err.get("code"), "subcode:", err.get("error_subcode"))
-              st2, me = get("/me?fields=id,name")
-              print("me http:", st2, "id:", me.get("id"), "name:", me.get("name"))
-              if st2 == 200:
-                  st3, pg = get("/%s?fields=id,name,instagram_business_account%%7Bid,username%%7D" % me["id"])
-                  print("page lookup http:", st3)
-                  if st3 == 200:
-                      ig = pg.get("instagram_business_account") or {}
-                      print("page:", pg.get("name"), "| ig_username:", ig.get("username"), "| ig_id:", ig.get("id"))
+              errline("me/accounts", st, acc)
           DBG_PY
