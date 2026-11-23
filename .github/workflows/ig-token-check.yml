@@ -10,25 +10,35 @@ jobs:
     runs-on: ubuntu-latest
     env:
       IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+      IG_EXPECTED_USERNAME: things._.explained
     steps:
-      - name: Debug token (prints type, scopes and expiry only, never the token)
+      - name: Verify token and account linkage (prints structure only, never tokens)
         run: |
           python3 - <<'DBG_PY'
-          import json, os, urllib.parse, urllib.request, datetime
+          import json, os, urllib.parse, urllib.request, urllib.error
           tok = os.environ["IG_ACCESS_TOKEN"]
-          q = urllib.parse.urlencode({"input_token": tok, "access_token": tok})
-          url = "https://graph.facebook.com/v23.0/debug_token?" + q
-          try:
-              with urllib.request.urlopen(url, timeout=30) as r:
-                  d = json.loads(r.read().decode()).get("data", {})
-          except Exception as e:
-              print("debug_token call failed:", str(e)[:300].replace(tok, "***"))
-              raise SystemExit(1)
-          for k in ("is_valid", "type", "app_id", "user_id", "expires_at", "data_access_expires_at"):
-                v = d.get(k)
-                if k.endswith("expires_at") and isinstance(v, int) and v:
-                    v = "%s (%s UTC)" % (v, datetime.datetime.fromtimestamp(v, datetime.timezone.utc).isoformat())
-                print("%s: %s" % (k, v))
-          print("scopes:", ",".join(d.get("scopes", [])))
-          print("granular:", ",".join(g.get("scope", "") for g in d.get("granular_scopes", [])))
+          def get(path):
+              url = "https://graph.facebook.com/v23.0" + path + ("&" if "?" in path else "?") + "access_token=" + urllib.parse.quote(tok)
+              try:
+                  with urllib.request.urlopen(url, timeout=30) as r:
+                      return r.status, json.loads(r.read().decode())
+              except urllib.error.HTTPError as e:
+                  return e.code, {"error": json.loads(e.read().decode() or "{}").get("error", {})}
+          st, acc = get("/me/accounts?fields=name,access_token,instagram_business_account%7Bid,username%7D")
+          print("me/accounts http:", st)
+          if st == 200:
+              for p in acc.get("data", []):
+                  ig = p.get("instagram_business_account") or {}
+                  print("page:", p.get("name"), "| ig_username:", ig.get("username"), "| ig_id:", ig.get("id"), "| page_token_returned:", bool(p.get("access_token")))
+          else:
+              err = acc.get("error", {})
+              print("lookup error code:", err.get("code"), "subcode:", err.get("error_subcode"))
+              st2, me = get("/me?fields=id,name")
+              print("me http:", st2, "id:", me.get("id"), "name:", me.get("name"))
+              if st2 == 200:
+                  st3, pg = get("/%s?fields=id,name,instagram_business_account%%7Bid,username%%7D" % me["id"])
+                  print("page lookup http:", st3)
+                  if st3 == 200:
+                      ig = pg.get("instagram_business_account") or {}
+                      print("page:", pg.get("name"), "| ig_username:", ig.get("username"), "| ig_id:", ig.get("id"))
           DBG_PY
