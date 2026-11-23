@@ -12,10 +12,11 @@ on:
         description: raw.githubusercontent.com/Genrec-Community URL of metadata.json
         required: true
 permissions:
-  contents: read
+  contents: write
   actions: read
 concurrency:
   group: upload-sample
+  cancel-in-progress: false
 jobs:
   upload:
     runs-on: ubuntu-latest
@@ -43,15 +44,83 @@ jobs:
           curl -fsSL "$M" -o out/metadata.json
       - name: Upload (public)
         env:
+          GH_TOKEN: ${{ github.token }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: |
-          python3 scripts/upload_youtube.py --file out/video.mp4 --metadata out/metadata.json --privacy public
+          python3 - <<'GUARD_PY'
+          import base64, hashlib, json, os, pathlib, subprocess, sys, urllib.request, urllib.error
+          
+          def main():
+              out = pathlib.Path('out/youtube_result.json')
+              digest = hashlib.sha256(pathlib.Path('out/video.mp4').read_bytes()).hexdigest()
+              historical = {
+                  '6a710d11d83927be275ca32bff00df2a25edc586ea472082be2dd734c2eaa29a': ('LrPjnJ2Bsx0', 'https://youtu.be/LrPjnJ2Bsx0'),
+                  'cf3b58d5ddd9ab3110405ccdf0e32f41ac868d8733a904f976d038038d7e8938': ('4M_g31jTM3M', 'https://youtu.be/4M_g31jTM3M'),
+              }
+              if digest in historical:
+                  vid, url = historical[digest]
+                  out.write_text(json.dumps({'status': 'skipped_duplicate', 'sha256': digest, 'video_id': vid, 'url': url}, indent=2))
+                  return 0
+              api = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/contents/state/manual-youtube/' + digest + '.json'
+              headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
+              def request(method, data=None):
+                  req = urllib.request.Request(api, data=None if data is None else json.dumps(data).encode(), headers=headers, method=method)
+                  with urllib.request.urlopen(req, timeout=45) as response:
+                      return json.load(response)
+              def save(status, **extra):
+                  out.write_text(json.dumps({'status': status, 'sha256': digest, **extra}, indent=2))
+              try:
+                  prior = request('GET')
+              except urllib.error.HTTPError as exc:
+                  if exc.code != 404:
+                      save('failed', stage='ledger_read', http=exc.code)
+                      return 1
+              else:
+                  record = json.loads(base64.b64decode(prior['content']))
+                  if record.get('status') == 'uploaded' and record.get('video_id'):
+                      save('skipped_duplicate', video_id=record['video_id'], url=record.get('url', ''))
+                      return 0
+                  save('blocked_unresolved_intent', original_run_id=record.get('run_id'))
+                  return 1
+              record = {'status': 'intent', 'sha256': digest, 'run_id': os.environ['GITHUB_RUN_ID']}
+              def payload(record, sha=None):
+                  data = {'message': 'Record manual YouTube publish ' + record['status'], 'content': base64.b64encode(json.dumps(record, indent=2).encode()).decode(), 'branch': 'main'}
+                  if sha:
+                      data['sha'] = sha
+                  return data
+              try:
+                  created = request('PUT', payload(record))
+              except Exception:
+                  save('failed', stage='intent_persistence')
+                  return 1
+              # Only a successfully persisted, uniquely created intent permits upload.
+              rc = subprocess.run([sys.executable, 'scripts/upload_youtube.py', '--file', 'out/video.mp4', '--metadata', 'out/metadata.json', '--privacy', 'public']).returncode
+              if rc or not out.exists():
+                  return 1
+              result = json.loads(out.read_text())
+              if result.get('status') != 'uploaded' or not result.get('video_id'):
+                  return 1
+              record.update(result)
+              try:
+                  request('PUT', payload(record, created['content']['sha']))
+              except Exception:
+                  # Keep original upload receipt; unresolved ledger intent blocks replay.
+                  print('Receipt persistence failed; upload result retained; replay blocked')
+                  return 1
+              return 0
+          
+          if __name__ == '__main__':
+              try:
+                  sys.exit(main())
+              except Exception:
+                  print('Manual publish stopped safely; inspect retained receipt and ledger')
+                  sys.exit(1)
+          GUARD_PY
           cat out/youtube_result.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: youtube-result
           path: out/youtube_result.json
-
