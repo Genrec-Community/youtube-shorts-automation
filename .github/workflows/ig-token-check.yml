@@ -60,4 +60,11 @@ jobs:
                   print("me/accounts ok but EMPTY page list")
           else:
               errline("me/accounts", st, acc)
+          if igid:
+              st, recent = get("/" + igid + "/media?fields=id,caption,permalink,timestamp&limit=30")
+              if st == 200:
+                  for item in recent.get("data", []):
+                      print("recent_media:", json.dumps({k: item.get(k) for k in ("id", "caption", "permalink", "timestamp")}))
+              else:
+                  errline("recent_media", st, recent)
           DBG_PY
