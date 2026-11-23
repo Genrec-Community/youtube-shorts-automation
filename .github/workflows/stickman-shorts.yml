@@ -74,6 +74,17 @@ jobs:
                       uploaded_today.add(rr.get('topic_id'))
           except FileNotFoundError:
               pass
+          # Any durable intent may have reached YouTube. Never infer non-publication
+          # from a missing receipt, a title search, changed notes, or a later date.
+          yt_blocked = set()
+          try:
+              for rr in csv.DictReader(open('state/receipts.csv', encoding='utf-8')):
+                  if rr.get('yt_status') in ('intent', 'uploaded') and rr.get('topic_id'):
+                      yt_blocked.add(rr['topic_id'])
+          except FileNotFoundError:
+              pass
+          if yt_blocked:
+              print('durable publication intents/receipts excluded:', sorted(yt_blocked))
           if uploaded_today:
               print('already uploaded today, excluded:', sorted(uploaded_today))
           # Receipt reconciliation (any date): an uploaded receipt means the topic is already published.
@@ -87,7 +98,7 @@ jobs:
           repaired = False
           for r in rows:
               notes = (r.get('notes') or '').strip()
-              if r['status'] in ('pending', 'failed') and r['id'] in yt_done and (not notes or notes.startswith('retry-')):
+              if r['status'] in ('pending', 'failed') and r['id'] in yt_done :
                   rec = yt_done[r['id']]
                   r['status'] = 'done'
                   r['finished_at'] = rec.get('date') or ist_today
@@ -110,7 +121,7 @@ jobs:
           print('IST now', ist.strftime('%Y-%m-%d %H:%M'), '-> slot', cur)
           chosen = next((r for r in rows if r['status'] == 'pending' and r['style'].strip().upper() in pool
                          and ok_slot(r) and r['topic'].strip().lower() not in closed
-                         and r['id'] not in uploaded_today), None)
+                         and r['id'] not in uploaded_today and r['id'] not in yt_blocked), None)
           if repaired:
               with open('stickman-topics.csv', 'w', newline='', encoding='utf-8') as f:
                   w = csv.DictWriter(f, fieldnames=rows[0].keys())
@@ -640,67 +651,58 @@ jobs:
         env:
           RUN_ID: ${{ github.run_id }}
         run: |
-          if ! python3 "$GITHUB_WORKSPACE/scripts/upload_youtube.py" --file out/stickman.mp4 --metadata out/metadata.json --privacy public; then
-            echo "upload call failed; reconciling against the channel before deciding (a lost response is unknown, not a safe failure)"
-            if python3 - <<'YTREC_PY'
-          import json, os, sys, urllib.request, urllib.parse
-          def post(url, data):
-              req = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode())
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  return json.loads(r.read().decode())
-          try:
-              tok = post('https://oauth2.googleapis.com/token', {
-                  'client_id': os.environ['YT_CLIENT_ID'], 'client_secret': os.environ['YT_CLIENT_SECRET'],
-                  'refresh_token': os.environ['YT_REFRESH_TOKEN'], 'grant_type': 'refresh_token'})
-              at = tok['access_token']
-          except Exception as e:
-              print('reconcile: token refresh failed:', str(e)[:200])
-              sys.exit(1)
-          title = json.load(open('/home/runner/w/out/metadata.json')).get('title', '').strip()
-          try:
-              def getj(url):
-                  req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + at})
-                  with urllib.request.urlopen(req, timeout=30) as r:
-                      return json.loads(r.read().decode())
-              ch = getj('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true')
-              up = ch['items'][0]['contentDetails']['relatedPlaylists']['uploads']
-              pl = getj('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=%s&maxResults=10' % up)
-          except Exception as e:
-              print('reconcile: channel listing failed:', str(e)[:200])
-              sys.exit(1)
-          for it in pl.get('items', []):
-              sn = it.get('snippet', {})
-              if sn.get('title', '').strip() == title:
-                  vid = sn.get('resourceId', {}).get('videoId', '')
-                  json.dump({'status': 'uploaded', 'video_id': vid, 'url': 'https://youtu.be/' + vid, 'privacy': 'public', 'reconciled': True},
-                            open('/home/runner/w/out/youtube_result.json', 'w'))
-                  print('reconciled: video is on the channel:', vid)
-                  sys.exit(0)
-          print('reconcile: title not found among', len(pl.get('items', [])), 'recent uploads; genuine failure')
-          sys.exit(1)
-          YTREC_PY
-            then
-              echo "reconciled via channel lookup; recording receipt instead of failing"
-            else
-              echo "upload failed (see out/youtube_result.json)"
-              echo failed > /home/runner/w/upload_failed.flag
-              exit 1
-            fi
-          fi
-          python3 - <<'REC_PY'
-          import csv, json, os, datetime
-          yt = json.load(open('/home/runner/w/out/youtube_result.json'))
-          ist = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).date().isoformat()
+          # Persist intent before the external side effect. An unresolved intent
+          # blocks all later automatic uploads of this topic, even after midnight.
+          python3 - <<'INTENT_PY'
+          import csv, os, datetime
           path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'state', 'receipts.csv')
           os.makedirs(os.path.dirname(path), exist_ok=True)
-          new = not os.path.exists(path)
-          with open(path, 'a', newline='', encoding='utf-8') as f:
-              w = csv.writer(f)
-              if new:
-                  w.writerow(['date', 'run_id', 'topic_id', 'yt_status', 'yt_url', 'ig_status', 'ig_permalink'])
-              w.writerow([ist, os.environ.get('RUN_ID', ''), open('/home/runner/w/topic_id.txt').read().strip(),
-                          yt.get('status', ''), yt.get('url', ''), '', ''])
-          print('receipt recorded:', yt.get('status'), yt.get('url'))
+          rows = list(csv.DictReader(open(path, encoding='utf-8'))) if os.path.exists(path) else []
+          tid = open('/home/runner/w/topic_id.txt').read().strip()
+          # Forced topics use a content identity rather than the shared word manual.
+          if tid == 'manual':
+              import hashlib
+              tid = 'manual-' + hashlib.sha256(open('/home/runner/w/topic.txt', 'rb').read().strip().lower()).hexdigest()[:24]
+          if any(r.get('topic_id') == tid and r.get('yt_status') in ('intent', 'uploaded') for r in rows):
+              raise SystemExit('FAIL CLOSED: prior publication intent/receipt exists; explicit reconciliation required')
+          fields = ['date', 'run_id', 'topic_id', 'yt_status', 'yt_url', 'ig_status', 'ig_permalink']
+          ist = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).date().isoformat()
+          rows.append(dict(zip(fields, [ist, os.environ['RUN_ID'], tid, 'intent', '', '', ''])))
+          with open(path, 'w', newline='', encoding='utf-8') as f:
+              w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); w.writerows(rows)
+          INTENT_PY
+          cd "$GITHUB_WORKSPACE"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add state/receipts.csv
+          git commit -q -m "receipt: yt intent run ${{ github.run_id }} [skip ci]"
+          intent_pushed=0
+          for i in 1 2; do
+            if git pull --rebase --autostash -q origin main && git push -q; then intent_pushed=1; break; fi
+            echo "intent push attempt $i failed"; sleep 5
+          done
+          [ "$intent_pushed" = 1 ] || { echo "FAIL CLOSED: intent push failed; no upload attempted"; exit 1; }
+          cd /home/runner/w
+          if ! python3 "$GITHUB_WORKSPACE/scripts/upload_youtube.py" --file out/stickman.mp4 --metadata out/metadata.json --privacy public; then
+            echo "Upload outcome unresolved. Durable intent blocks replay; no title-only reconciliation."
+            echo unknown > /home/runner/w/upload_failed.flag
+            exit 1
+          fi
+          python3 - <<'REC_PY'
+          import csv, json, os
+          yt = json.load(open('/home/runner/w/out/youtube_result.json'))
+          if yt.get('status') != 'uploaded' or not yt.get('video_id') or not yt.get('url'):
+              raise SystemExit('FAIL CLOSED: upload receipt incomplete; durable intent retained')
+          path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'state', 'receipts.csv')
+          with open(path, encoding='utf-8') as f:
+              reader = csv.DictReader(f); fields = reader.fieldnames; rows = list(reader)
+          hits = [r for r in rows if r.get('run_id') == os.environ['RUN_ID'] and r.get('yt_status') == 'intent']
+          if len(hits) != 1:
+              raise SystemExit('FAIL CLOSED: expected exactly one durable intent for this run')
+          hits[0]['yt_status'] = 'uploaded'; hits[0]['yt_url'] = yt['url']
+          with open(path, 'w', newline='', encoding='utf-8') as f:
+              w = csv.DictWriter(f, fieldnames=fields); w.writeheader(); w.writerows(rows)
+          print('receipt updated:', yt['url'])
           REC_PY
           cd "$GITHUB_WORKSPACE"
           git config user.name 'github-actions[bot]'
