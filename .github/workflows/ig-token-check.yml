@@ -1,0 +1,34 @@
+name: Inspect Instagram token (manual)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ig-post
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+    steps:
+      - name: Debug token (prints type, scopes and expiry only, never the token)
+        run: |
+          python3 - <<'DBG_PY'
+          import json, os, urllib.parse, urllib.request, datetime
+          tok = os.environ["IG_ACCESS_TOKEN"]
+          q = urllib.parse.urlencode({"input_token": tok, "access_token": tok})
+          url = "https://graph.facebook.com/v23.0/debug_token?" + q
+          try:
+              with urllib.request.urlopen(url, timeout=30) as r:
+                  d = json.loads(r.read().decode()).get("data", {})
+          except Exception as e:
+              print("debug_token call failed:", str(e)[:300].replace(tok, "***"))
+              raise SystemExit(1)
+          for k in ("is_valid", "type", "app_id", "user_id", "expires_at", "data_access_expires_at"):
+                v = d.get(k)
+                if k.endswith("expires_at") and isinstance(v, int) and v:
+                    v = "%s (%s UTC)" % (v, datetime.datetime.fromtimestamp(v, datetime.timezone.utc).isoformat())
+                print("%s: %s" % (k, v))
+          print("scopes:", ",".join(d.get("scopes", [])))
+          print("granular:", ",".join(g.get("scope", "") for g in d.get("granular_scopes", [])))
+          DBG_PY
