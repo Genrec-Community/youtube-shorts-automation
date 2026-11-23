@@ -9,8 +9,8 @@ on:
         description: Optional run id of this repo whose stickman-output artifact holds stickman.mp4
         required: false
       metadata_url:
-        description: raw.githubusercontent.com/Genrec-Community URL of metadata.json
-        required: true
+        description: raw.githubusercontent.com/Genrec-Community URL of metadata.json (optional when artifact_run_id is set and the artifact holds metadata.json)
+        required: false
 permissions:
   contents: write
   actions: read
@@ -33,17 +33,27 @@ jobs:
         run: |
           test -n "$IG_USER_ID" -a -n "$IG_ACCESS_TOKEN" || { echo "IG_USER_ID or IG_ACCESS_TOKEN secret missing"; exit 1; }
           P="https://raw.githubusercontent.com/Genrec-Community/"
-          case "$M" in "$P"*) ;; *) echo "metadata url not allowed"; exit 1;; esac
           mkdir -p out dl
           if [ -n "$RID" ]; then
             case "$RID" in *[!0-9]*) echo "bad run id"; exit 1;; esac
             gh run download "$RID" -n stickman-output -D dl
             cp dl/stickman.mp4 out/video.mp4
+            if [ -n "$M" ]; then
+              case "$M" in "$P"*) ;; *) echo "metadata url not allowed"; exit 1;; esac
+              curl -fsSL "$M" -o out/metadata.json
+            elif [ -f dl/metadata.json ]; then
+              cp dl/metadata.json out/metadata.json
+              echo "metadata taken from the run artifact"
+            else
+              echo "no metadata_url given and artifact has no metadata.json"; exit 1
+            fi
           else
+            test -n "$M" || { echo "metadata_url required without artifact_run_id"; exit 1; }
+            case "$M" in "$P"*) ;; *) echo "metadata url not allowed"; exit 1;; esac
             case "$V" in "$P"*) ;; *) echo "video url not allowed"; exit 1;; esac
             curl -fsSL "$V" -o out/video.mp4
+            curl -fsSL "$M" -o out/metadata.json
           fi
-          curl -fsSL "$M" -o out/metadata.json
       - name: Host the mp4 on a release and publish the Reel
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,4 +70,3 @@ jobs:
         with:
           name: instagram-result
           path: out/instagram_result.json
-
