@@ -1,5 +1,9 @@
 {
-  "status": "intent",
+  "status": "uploaded",
   "sha256": "0ad8a1b6862df577956346b7862885b02c2afb91443989e1ef6ddf7728968efd",
-  "run_id": "45229631685"
+  "run_id": "45229631685",
+  "video_id": "c8pYbN0GTEY",
+  "url": "https://youtu.be/c8pYbN0GTEY",
+  "privacy": "public",
+  "title": "How Does Sand Become a GPU?"
 }
