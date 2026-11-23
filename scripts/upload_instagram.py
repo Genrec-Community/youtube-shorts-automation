@@ -99,19 +99,33 @@ def main():
     if not TOK:
         done("skipped", reason="missing IG_ACCESS_TOKEN")
 
-    st, pages = call("GET", "/me/accounts?fields=name,instagram_business_account%7Bid,username%7D")
+    # Resolve the linked Page AND its Page access token in one lookup. Meta documents
+    # that a Page token derived from a long-lived user token has no scheduled expiry;
+    # all publish calls below use it, never the user token. It is never logged.
+    st, pages = call("GET", "/me/accounts?fields=name,access_token,instagram_business_account%7Bid,username%7D")
     if st != 200:
         err = pages.get("error", {})
         if err.get("code") == 190:
             done("token_invalid_or_expired", http=st, error=err)
         done("account_lookup_failed", http=st, error=err)
-    matches = [p["instagram_business_account"] for p in pages.get("data", [])
+    matches = [p for p in pages.get("data", [])
                if p.get("instagram_business_account", {}).get("username") == expected_user]
     if len(matches) != 1:
         done("account_not_found_or_ambiguous", expected=expected_user, matches=len(matches))
-    uid = matches[0]["id"]
+    page = matches[0]
+    uid = page["instagram_business_account"]["id"]
     if expected_id and expected_id != uid:
         done("account_id_mismatch", expected_id=expected_id, found_id=uid)
+    page_tok = page.get("access_token")
+    if page_tok:
+        globals()["TOK"] = page_tok  # switch every later call to the Page token; never logged
+    # Live correct-account verification with the Page token BEFORE any publish call.
+    st, who = call("GET", "/%s?fields=username" % uid)
+    if st != 200 or who.get("username") != expected_user:
+        err = who.get("error", {})
+        if err.get("code") == 190:
+            done("token_invalid_or_expired", http=st, error=err)
+        done("page_token_verification_failed", http=st, error=err, got=who.get("username"))
 
     try:
         meta = json.load(open(a.metadata))
