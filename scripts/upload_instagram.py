@@ -102,17 +102,31 @@ def main():
     # Resolve the linked Page AND its Page access token in one lookup. Meta documents
     # that a Page token derived from a long-lived user token has no scheduled expiry;
     # all publish calls below use it, never the user token. It is never logged.
+    page = None
+    # User-token route: /me/accounts lists the Pages and their Page access tokens.
     st, pages = call("GET", "/me/accounts?fields=name,access_token,instagram_business_account%7Bid,username%7D")
-    if st != 200:
+    if st == 200:
+        matches = [p for p in pages.get("data", [])
+                   if p.get("instagram_business_account", {}).get("username") == expected_user]
+        if len(matches) != 1:
+            done("account_not_found_or_ambiguous", expected=expected_user, matches=len(matches))
+        page = matches[0]
+    else:
         err = pages.get("error", {})
         if err.get("code") == 190:
             done("token_invalid_or_expired", http=st, error=err)
-        done("account_lookup_failed", http=st, error=err)
-    matches = [p for p in pages.get("data", [])
-               if p.get("instagram_business_account", {}).get("username") == expected_user]
-    if len(matches) != 1:
-        done("account_not_found_or_ambiguous", expected=expected_user, matches=len(matches))
-    page = matches[0]
+        # Page-token route: a Page token cannot call /me/accounts; /me resolves to the Page itself.
+        st2, me = call("GET", "/me?fields=id,name")
+        if st2 != 200 or not me.get("id"):
+            done("account_lookup_failed", http=st, error=err, me_http=st2, me_error=me.get("error"))
+        st3, pg = call("GET", "/%s?fields=id,name,instagram_business_account%%7Bid,username%%7D" % me["id"])
+        if st3 != 200:
+            done("page_lookup_failed", http=st3, error=pg.get("error"))
+        if pg.get("instagram_business_account", {}).get("username") == expected_user:
+            page = pg
+        else:
+            done("account_not_found_or_ambiguous", expected=expected_user, matches=0,
+                 note="page token resolves to a Page without the expected Instagram account")
     uid = page["instagram_business_account"]["id"]
     if expected_id and expected_id != uid:
         done("account_id_mismatch", expected_id=expected_id, found_id=uid)
