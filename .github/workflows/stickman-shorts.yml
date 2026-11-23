@@ -497,10 +497,18 @@ jobs:
           NORM2_PY
           check() {
           python3 - <<'VALID_PY'
-          import json, subprocess, sys
+          import json, re, subprocess, sys
           try:
               d = float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','csv=p=0','out/stickman.mp4']).strip())
               assert 35 <= d <= 58, 'duration %.1fs out of range 35-58' % d
+              streams = json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries','stream=codec_type,duration','-of','json','out/stickman.mp4']))['streams']
+              astreams = [s for s in streams if s.get('codec_type') == 'audio']
+              assert astreams, 'no audio stream'
+              adur = float(astreams[0].get('duration') or d)
+              assert adur >= 30.0, 'audio stream too short: %.1fs' % adur
+              vout = subprocess.check_output(['ffmpeg','-i','out/stickman.mp4','-af','volumedetect','-f','null','-'], stderr=subprocess.STDOUT).decode()
+              mv = re.search(r'max_volume:\s*(-?[\d.]+) dB', vout)
+              assert mv and float(mv.group(1)) > -50.0, 'audio stream is silent (max_volume %s)' % (mv.group(1) if mv else 'unknown')
               m = json.load(open('out/metadata.json', encoding='utf-8'))
               assert m.get('title') and len(m['title']) <= 100, 'bad title'
               assert m.get('description'), 'missing description'
@@ -591,7 +599,7 @@ jobs:
             fi
           fi
           python3 variety.py out/stickman.mp4 | tee out/variety-final.json
-      - name: Visual QA of the render (pixel review gates any publish)
+      - name: Visual QA of the render (advisory review; basic validation gates publish)
         if: steps.pick.outputs.skip != 'true'
         working-directory: /home/runner/w
         run: |
@@ -610,10 +618,23 @@ jobs:
             ffmpeg -y -v error -ss "$T" -i out/stickman.mp4 -frames:v 1 -vf scale=540:960 qa_frames/f$f.png
           done
           ls -la qa_frames
+          QA_BUDGET=420; QA_START=$SECONDS
           for i in 1 2 3; do
             [ -s out/qa_result.json ] && break
+            [ $((SECONDS - QA_START)) -ge $QA_BUDGET ] && { echo "QA total review budget ${QA_BUDGET}s exhausted; review marked unavailable"; break; }
             echo "QA attempt $i"
-            timeout -k 30 300 opencode run -m $MODEL "Visually review the finished vertical Short /home/runner/w/out/stickman.mp4 on this topic: $(cat topic.txt). Sampled frames from across its full length are at /home/runner/w/qa_frames/ (seven images, f0.05 through f0.95). READ every one of those frame images, then check honestly: captions or on-screen text are present and readable, the visuals actually match the topic, no blank or black or corrupt frames, composition fills the portrait frame. Then write /home/runner/w/out/qa_result.json containing exactly this JSON shape: {'pass': true or false, 'frames_checked': <count you read>, 'notes': '<what you actually saw, including anything wrong>'}. Set pass only if you really read the frames and the video looks right. Keep your output short." > out/qa-attempt-$i.log 2>&1 || true
+            opencode run -m $MODEL "Visually review the finished vertical Short /home/runner/w/out/stickman.mp4 on this topic: $(cat topic.txt). Sampled frames from across its full length are at these seven exact paths: /home/runner/w/qa_frames/f0.05.png /home/runner/w/qa_frames/f0.2.png /home/runner/w/qa_frames/f0.35.png /home/runner/w/qa_frames/f0.5.png /home/runner/w/qa_frames/f0.65.png /home/runner/w/qa_frames/f0.8.png /home/runner/w/qa_frames/f0.95.png . READ every one of those frame images, then check honestly: captions or on-screen text are present and readable, the visuals actually match the topic, no blank or black or corrupt frames, composition fills the portrait frame. Then write /home/runner/w/out/qa_result.json containing exactly this JSON shape: {'pass': true or false, 'frames_checked': <count you read>, 'notes': '<what you actually saw, including anything wrong>'}. Set pass only if you really read the frames and the video looks right. Keep your output short." > out/qa-attempt-$i.log 2>&1 &
+            OPID=$!
+            last_size=-1; stale=0
+            while kill -0 $OPID 2>/dev/null; do
+              sleep 15
+              size=$(stat -c %s out/qa-attempt-$i.log 2>/dev/null || echo 0)
+              if [ "$size" = "$last_size" ]; then stale=$((stale+15)); else stale=0; last_size=$size; fi
+              if [ $stale -ge 90 ]; then echo "QA attempt $i: no output for 90s; restarting with a fresh session"; break; fi
+              if [ $((SECONDS - QA_START)) -ge $QA_BUDGET ]; then echo "QA attempt $i: total review budget reached"; break; fi
+            done
+            kill -9 $OPID 2>/dev/null || true
+            wait $OPID 2>/dev/null || true
             pkill -9 -f "opencode run" || true
             python3 - <<'QCHECK'
           import json, os
@@ -633,17 +654,27 @@ jobs:
           chmod +x $HOME/w/qa_agent.sh
           $HOME/w/qa_agent.sh || true
           python3 - <<'QGATE'
-          import json, sys
+          import json, os
+          adv = {'status': 'unavailable', 'notes': ''}
           try:
               q = json.load(open('/home/runner/w/out/qa_result.json'))
-              ok = q.get('pass') is True
-              print('QA gate:', 'PASS' if ok else 'FAIL', '|', str(q.get('notes', ''))[:400])
+              adv['status'] = 'pass' if q.get('pass') is True else 'fail'
+              adv['notes'] = str(q.get('notes', ''))[:400]
           except Exception as e:
-              ok = False
-              print('QA gate: pixel review could not complete:', e)
-          if not ok:
-              print('Blocking publish: no public upload without a completed pixel review; run fails, topic keeps its queue slot')
-          sys.exit(0 if ok else 1)
+              adv['notes'] = 'pixel review could not complete: %s' % e
+          print('QA advisory:', adv['status'], '|', adv['notes'])
+          try:
+              json.dump(adv, open('/home/runner/w/out/qa_advisory.json', 'w'))
+          except Exception as e:
+              print('advisory file write failed:', e)
+          try:
+              with open(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'), 'a') as f:
+                  f.write('## Visual QA (advisory)\n\nStatus: **%s**\n\n%s\n' % (adv['status'], adv['notes'] or '(no review notes)'))
+          except Exception as e:
+              print('summary write failed:', e)
+          # Advisory by owner decision (Nov 23): AI pixel review no longer blocks publish.
+          # The truthful outcome is recorded above; file/audio/duration/metadata validation
+          # earlier in the job remains the hard gate. No review result is ever fabricated.
           QGATE
       - name: Upload Short to YouTube (only when explicitly enabled)
         if: steps.pick.outputs.skip != 'true' && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
@@ -940,3 +971,4 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
+
