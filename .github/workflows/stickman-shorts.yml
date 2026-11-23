@@ -7,14 +7,16 @@ on:
         required: false
         default: ''
       style:
-        description: 'Style for a forced topic: B7 (Pixel Theater) or A5 (Historical Cartoon)'
+        description: 'Forced topic style: C3 (3D-world cartoon), B7 (Pixel), A5 (Historical Cartoon), H1 (Bauhaus)'
         required: false
         default: 'B7'
-  # Two runs daily (external cron-job.org dispatch): ~08:47 IST (03:17 UTC) and ~17:47 IST (12:17 UTC).
-  # Style rotation since 2026-11-19 (user-approved): ONLY B7 Pixel Theater and A5 Historical Cartoon, alternating by the style column of stickman-topics.csv.
-  # Off-peak minute: GitHub drops scheduled runs under load at :00/:30.
-  # Each run makes ONE vertical Short (next pending topic in stickman-topics.csv). Scripts by DeepSeek free via OpenCode; narration tiny-voca F2.
-  # schedule: disabled 2026-11-19 - external cron-job.org triggers fire workflow_dispatch at 03:17 and 12:17 UTC (08:47 / 17:47 IST); GitHub's own scheduler silently skipped runs.
+      validation_only:
+        description: 'Render and inspect only: no publication, release hosting, queue or receipt mutation'
+        type: boolean
+        required: false
+        default: false
+  # Three external dispatches daily:08:47,13:47,17:47IST. No scheduler changes here.
+  # Daily mix: morning C3 animated3D-world, afternoon B7 Pixel, evening A5/H1 alternating.
 permissions:
   contents: write
   issues: write
@@ -46,9 +48,11 @@ jobs:
           import csv, os, sys
           import datetime
           forced = os.environ.get('FORCED_TOPIC', '').strip()
+          if os.environ.get('VALIDATION_ONLY') == 'true' and not forced:
+              raise SystemExit('validation_only requires forced topic; queue must remain untouched')
           forced_style = (os.environ.get('FORCED_STYLE', '').strip() or 'B7').upper()
           sched = os.environ.get('SCHEDULE', '')
-          pool = {'B7', 'A5', 'H1', 'AUTO'}
+          pool = {'C3', 'B7', 'A5', 'H1', 'AUTO'}
           os.makedirs('/home/runner/w', exist_ok=True)
           if forced:
               open('/home/runner/w/topic.txt', 'w').write(forced + '\n')
@@ -133,7 +137,8 @@ jobs:
               open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=true\n')
               sys.exit(0)
           open('/home/runner/w/topic.txt', 'w').write(chosen['topic'].strip() + '\n')
-          open('/home/runner/w/style.txt', 'w').write(chosen['style'].strip().upper() + '\n')
+          daily_style = {'m': 'C3', 'a': 'B7', 'e': ('A5' if ist.date().toordinal() % 2 == 0 else 'H1')}[cur]
+          open('/home/runner/w/style.txt', 'w').write(daily_style + '\n')
           open('/home/runner/w/topic_id.txt', 'w').write(chosen['id'])
           open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=false\ntopic_id=%s\n' % chosen['id'])
           print('Chosen:', chosen['id'], chosen['style'], chosen['topic'])
@@ -146,6 +151,7 @@ jobs:
             git commit -q -m "queue: reconcile upload receipts [skip ci]" || echo "nothing to commit"
             for i in 1 2; do git pull --rebase --autostash -q origin main && git push -q && break || { echo "reconcile push attempt $i failed"; sleep 5; }; done
           fi
+          [ "${{ inputs.validation_only }}" = "true" ] && exit 0
           python3 - <<'INPROG_PY'
           import csv
           tid = open('/home/runner/w/topic_id.txt').read().strip()
@@ -158,11 +164,12 @@ jobs:
               w.writeheader(); w.writerows(rows)
           INPROG_PY
         env:
+          VALIDATION_ONLY: ${{ inputs.validation_only }}
           FORCED_TOPIC: ${{ inputs.topic }}
           FORCED_STYLE: ${{ inputs.style }}
           SCHEDULE: ${{ github.event.schedule }}
       - name: Notify when the stickman queue is empty for this slot
-        if: steps.pick.outputs.skip == 'true'
+        if: inputs.validation_only != true && steps.pick.outputs.skip == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -210,6 +217,32 @@ jobs:
             sudo apt-get install -y fonts-noto-cjk || true
             pip install uv playwright
             python3 -m playwright install --with-deps chromium
+          fi
+      - name: Prepare supplied animated3D-world project (C3 only)
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          if [ "$(cat /home/runner/w/style.txt)" = "C3" ]; then
+            python3 - <<'C3PY'
+          import urllib.request,hashlib,zipfile,io,os
+          u='https://drive.usercontent.google.com/download?id=1LodoXvVGhZIdGhFihdLWFDq4mkjtsl0w&export=download&confirm=t'
+          b=urllib.request.urlopen(u,timeout=120).read()
+          assert hashlib.sha256(b).hexdigest()=='f8deb6c12f05128d6b944bfe1cefb7b32e108c11068fe91f559356d37ad6eb70','supplied project changed; stop rather than silently switch'
+          root='/home/runner/w/project'
+          z=zipfile.ZipFile(io.BytesIO(b))
+          for n in z.namelist():
+              dest=os.path.realpath(os.path.join(root,n))
+              assert dest.startswith(root+'/'),'unsafe archive path'
+          z.extractall(root)
+          shutil_src=root+'/.claude/skills/animated-shorts/SKILL.md'
+          open(root+'/SKILL.md','w').write(open(shutil_src).read())
+          # Never reuse example narration or finished media in a new episode.
+          import shutil
+          shutil.rmtree(root+'/public',ignore_errors=True)
+          os.makedirs(root+'/public/ep1',exist_ok=True)
+          C3PY
+            cd /home/runner/w/project
+            ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
+            npx remotion browser ensure
           fi
       - name: Cache pip + TTS models
         if: steps.pick.outputs.skip != 'true'
@@ -339,6 +372,8 @@ jobs:
           TOPIC="$(cat $HOME/w/topic.txt)"; STYLE="$(cat $HOME/w/style.txt)"
           SKILL_DIR=/home/runner/w/svd/skills/directing-stickman-videos; KIND="stickman explainer Short"
           case "$STYLE" in
+            C3) SKILL_DIR=/home/runner/w/project; KIND="animated explainer with2D drawn characters/objects in3D sets"; STYLE_NAME="C3 Animated3D-world Cartoon (same engine as tanker experiment)"; STYLE_REF=".claude/skills/animated-shorts/SKILL.md, src/engine/Stage.tsx and src/ep1 examples"
+                ROUTE="Use the supplied Three.js plus Remotion project already installed at /home/runner/w/project. Preserve its Stage/Toon/kit camera and lighting grammar. Rewrite src/ep1 sets/cast/shots and episodes/ep1 story/shots/timing/sound for THIS topic, never the bundled London example. At least7 distinct lit3D sets or mechanism cutaways, camera glides, readable large captions,2D drawn characters only where useful. No talking presenter, flat slideshow, stock footage or claimed physical simulation. Use channel python /home/runner/w/tts.py for each narration shot, concatenate their WAVs and write exact measured shot starts/ends and per-word timing in the existing timing.json schema (w,start,end). Generate original low-volume code sound using scripts/sound.mjs ep1, which mixes public/ep1/voice.wav into mix.wav. Do not call the template voice.mjs or substitute voice/model. Modify composition Short only as needed; keep1080x1920/30fps. DO NOT render the full MP4 in the agent session. Write metadata.json and NOTES.md to /home/runner/w/out, run npx tsc --noEmit, then write /home/runner/w/out/c3-ready.flag last and stop. A later deterministic step renders the exact saved project. The ready flag is progress, not a finished video." ;;
             A5) STYLE_NAME="Style 5 Historical Cartoon (code-rendered approximation)"; STYLE_REF="references/historical-cartoon.md and references/a1-a5-direction.md (the drawing grammar and era guidance only)"
                 ROUTE="A5 is one of the Skill's A (Model Engine) styles, which normally depend on external AI video generation. That is NOT available here (free-only, headless CI). Build the video with project-local code: draw each scene as 2D vector/canvas frames at native 1080x1920 (the Skill's node runtime has @napi-rs/canvas and sharp; SVG rasterized is fine) following the style's drawing grammar (character look, palette, painted-style backgrounds, expressive simple faces, caption-safe layout), animate with real motion, mux with the narration and a locally synthesized quiet music bed, encode with ffmpeg. Render at the full 1080x1920 from the start; do not drop to 720p for speed (if it is slow, simplify scenes instead). State plainly in NOTES.md that this is a code-rendered approximation of the style, not generated video." ;;
             H1) SKILL_DIR=/home/runner/w/hm; KIND="explainer Short with no characters (Bauhaus poster motion graphics)"; STYLE_NAME="H1 Bauhaus Poster Motion (huashu-art-motion)"; STYLE_REF="its track steps: shot list template, storyboard lint, then the engine"
@@ -346,6 +381,8 @@ jobs:
             *) STYLE="B7"; STYLE_NAME="B7 Pixel Theater"; STYLE_REF="references/b7-pixel-theater.md, references/b7-native-portrait.md, references/b7-review.md"
                 ROUTE="B7 is a project-local code style: follow references/b7-pixel-theater.md and its 9:16 portrait contract (native 180x320 canvas enlarged 6x to 1080x1920), using the Skill's bundled pixel/ending helpers with reviewed project-local code. Inspect the bundled reference films as the reference mandates." ;;
           esac
+          SHIP_RULE="The moment the final MP4 renders, FIRST copy it to /home/runner/w/out/stickman.mp4, then write metadata.json, then NOTES.md, then stop."
+          if [ "$STYLE" = "C3" ]; then SHIP_RULE="C3 exception: do not render full video here. Finish the complete source, narration, timing, sound, metadata and NOTES; write c3-ready.flag last. The next deterministic step renders and validates it."; fi
           VARIETY=""
           if [ "$STYLE" != "H1" ]; then
             VARIETY=$(cat <<'VAR_EOF'
@@ -372,7 +409,7 @@ jobs:
           - Music/SFX: only what the Skill can synthesize locally or its own bundled assets; skip anything needing downloads or licenses. If you use any CC-BY asset, its full attribution line goes into metadata.json's description.
           - Human-approval gates: where the Skill requires a human preview or design approval that is impossible in this headless CI, proceed with the most conservative choice and record exactly which gates were bypassed in NOTES.md; never fabricate an approval or acceptance.
           - Keep total runtime under 105 minutes of compute. Do not stop to ask or to summarize before the MP4 exists: keep working with tools until it does. Use /home/runner/w/tmp for scratch files, never /tmp.
-          - Ship order is strict: the moment the final MP4 renders, FIRST copy it to /home/runner/w/out/stickman.mp4, then write metadata.json, then NOTES.md, then stop. Do NOT run the style's visual/image review in this session and never open image or PNG files here (image reads have hung this model mid-run); a separate workflow step does the pixel QA after you finish.
+          - Ship order: ${SHIP_RULE} Do NOT run the style's visual/image review in this session and never open image or PNG files here (image reads have hung this model mid-run); a separate workflow step does the pixel QA after you finish.
 
           ${VARIETY}
 
@@ -385,8 +422,8 @@ jobs:
           Do this:
           1. Read SKILL.md and ${STYLE_REF} (for B7 this is the 9:16 portrait contract; for A5 the historical-cartoon grammar). Run the style's workflow query as directed.
           2. Write the script exactly per the scriptwriter skill (Part A narration and Part B beats), then produce narration with the local TTS route.
-          3. Build the project per the route above and render the final MP4 with project-local code at 1080x1920 (9:16).
-          4. Copy the final MP4 to /home/runner/w/out/stickman.mp4.
+          3. Build the project per the route above. For C3 stop at validated complete project and c3-ready.flag; other styles render final MP4 at1080x1920.
+          4. For non-C3 copy final MP4 to /home/runner/w/out/stickman.mp4. For C3 deterministic renderer does this after your source handoff.
           5. Metadata: FIRST read $GITHUB_WORKSPACE/skills/youtube-shorts-metadata-generator/SKILL.md and apply it to your final Part A narration text. Write /home/runner/w/out/metadata.json (valid JSON, no comments) with these keys:
              "title": the skill's recommended_title (under 55 characters, the curiosity hook in the first 5 words, no spoiler of the ending, no misleading promise),
              "titles": {"option_a_curiosity": "...", "option_b_contrarian": "...", "option_c_search_hybrid": "..."},
@@ -396,7 +433,7 @@ jobs:
              Skip the skill's pinned comment section entirely: do not write any pinned_comment.
              Every claim in the title, description and comment must be true and supported by the script; the editorial standard above applies to metadata too (no invented facts, no medical advice, beliefs described as beliefs).
           6. Write /home/runner/w/out/NOTES.md: style, script, what worked, renderer complaints, bypassed gates, render time.
-          7. If a step fails twice, simplify scope (fewer scenes) rather than retrying the same thing. Never claim success without an actual playable MP4 in /home/runner/w/out.
+          7. If a step fails twice, simplify scope rather than repeating it. For C3 complete the source handoff without claiming a finished video; other styles need actual playable MP4.
           PROMPT_EOF
           cat > $HOME/w/run_agent.sh <<'AGENT_SH'
           #!/bin/bash
@@ -422,12 +459,17 @@ jobs:
             wait $PIPE 2>/dev/null || true
           }
           for i in 1 2 3 4 5 6 7 8; do
+            if [ "$(cat $HOME/w/style.txt)" = C3 ] && [ -s $HOME/w/out/c3-ready.flag ]; then echo "C3 source handoff ready"; break; fi
             if [ -s $HOME/w/out/stickman.mp4 ] && [ "$(ffprobe -v error -show_entries format=duration -of csv=p=0 $HOME/w/out/stickman.mp4 | cut -d. -f1)" -ge 20 ] 2>/dev/null; then echo "video present after attempt $((i-1))"; break; fi
             [ "$(cat $HOME/w/stalls.log 2>/dev/null | wc -l)" -ge 4 ] && { echo "4 stalls: giving up fast instead of burning the budget"; break; }
-            LEFT=$(( 6600 - ($(date +%s) - START) ))
+            BUDGET=6600; [ "$(cat $HOME/w/style.txt)" = C3 ] && BUDGET=2100
+            LEFT=$(( BUDGET - ($(date +%s) - START) ))
             [ $LEFT -lt 300 ] && { echo "time budget used up"; break; }
             if [ $i -eq 1 ]; then
               run_oc $LEFT opencode run -m $MODEL "$(cat $HOME/w/PROMPT.md)"
+            elif [ "$(cat $HOME/w/style.txt)" = C3 ]; then
+              rm -f $HOME/w/last_stalled
+              run_oc $LEFT opencode run -m $MODEL "Continue C3 source preparation from saved files. Read /home/runner/w/PROMPT.md. Keep existing narration and work; fix only missing source/audio/timing/metadata. Do NOT render full MP4 or read images. Run tsc, write c3-ready.flag last, stop."
             elif [ -f $HOME/w/last_stalled ]; then
               # A stalled session is not resumed: replaying its long history hung every time (runs 44903138192 and 45002095124 stalled 3 times in a row). Start a fresh, small session that continues from the files on disk.
               rm -f $HOME/w/last_stalled
@@ -444,6 +486,16 @@ jobs:
           while kill -0 $AGENT_PID 2>/dev/null; do sleep 20; done
           tail -n 40 $HOME/w/out/agent-loop.log || true
           ls -la $HOME/w/out
+      - name: Render saved C3 source with bounded deterministic export
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w/project
+        run: |
+          if [ "$(cat /home/runner/w/style.txt)" = C3 ]; then
+            test -s /home/runner/w/out/c3-ready.flag
+            npx tsc --noEmit
+            timeout -k 30 3000 npx remotion render src/index.ts Short /home/runner/w/out/stickman.mp4 --gl=swangle --concurrency=4 --codec=h264 --crf=18 --log=info
+            tar --exclude=node_modules --exclude=.git --exclude=out -czf /home/runner/w/out/c3-project.tar.gz .
+          fi
       - name: Validate video + metadata (one corrective retry)
         if: steps.pick.outputs.skip != 'true'
         working-directory: /home/runner/w
@@ -580,7 +632,7 @@ jobs:
           STYLE=$(cat style.txt)
           python3 variety.py out/stickman.mp4 > out/variety-1.json || echo '{"scenes":99}' > out/variety-1.json
           echo "first pass:"; cat out/variety-1.json
-          FLAT=$(python3 -c "import json;d=json.load(open('out/variety-1.json'));print(1 if d['scenes']<6 and '$STYLE'!='H1' else 0)")
+          FLAT=$(python3 -c "import json;d=json.load(open('out/variety-1.json'));print(1 if d['scenes']<6 and '$STYLE' not in ('H1','C3') else 0)")
           if [ "$FLAT" = "1" ]; then
             echo "flat video: one corrective pass"
             cp out/stickman.mp4 out/stickman_first_pass.mp4
@@ -677,7 +729,7 @@ jobs:
           # earlier in the job remains the hard gate. No review result is ever fabricated.
           QGATE
       - name: Upload Short to YouTube (only when explicitly enabled)
-        if: steps.pick.outputs.skip != 'true' && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
+        if: steps.pick.outputs.skip != 'true' && inputs.validation_only != true && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
         working-directory: /home/runner/w
         env:
           RUN_ID: ${{ github.run_id }}
@@ -742,7 +794,7 @@ jobs:
           git commit -q -m "receipt: yt run ${{ github.run_id }} [skip ci]" || echo "nothing to commit"
           for i in 1 2; do git pull --rebase --autostash -q origin main && git push -q && break || { echo "receipt push attempt $i failed"; sleep 5; }; done
       - name: Publish Reel to Instagram (only when explicitly enabled)
-        if: steps.pick.outputs.skip != 'true' && vars.IG_UPLOAD_ENABLE == 'true' && env.IG_USER_ID != '' && env.IG_ACCESS_TOKEN != ''
+        if: steps.pick.outputs.skip != 'true' && inputs.validation_only != true && vars.IG_UPLOAD_ENABLE == 'true' && env.IG_USER_ID != '' && env.IG_ACCESS_TOKEN != ''
         working-directory: /home/runner/w
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -840,7 +892,7 @@ jobs:
           git commit -q -m "receipt: ig run ${{ github.run_id }} [skip ci]" || echo "nothing to commit"
           for i in 1 2; do git pull --rebase --autostash -q origin main && git push -q && break || { echo "receipt push attempt $i failed"; sleep 5; }; done
       - name: Flag Instagram token expiry (never fails the job)
-        if: steps.pick.outputs.skip != 'true' && always() && !cancelled()
+        if: inputs.validation_only != true && steps.pick.outputs.skip != 'true' && always() && !cancelled()
         working-directory: /home/runner/w
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -856,7 +908,7 @@ jobs:
           fi
           exit 0
       - name: Record run state in queue
-        if: steps.pick.outputs.skip != 'true' && always()
+        if: inputs.validation_only != true && steps.pick.outputs.skip != 'true' && always()
         run: |
           python3 - <<'STATE_PY'
           import csv, json, os, datetime, sys
@@ -942,7 +994,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
       - name: Open an issue when the run fails
-        if: failure()
+        if: inputs.validation_only != true && failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -971,4 +1023,3 @@ jobs:
           name: stickman-output
           path: /home/runner/w/out
           retention-days: 14
-
