@@ -301,6 +301,7 @@ jobs:
           - Music/SFX: only what the Skill can synthesize locally or its own bundled assets; skip anything needing downloads or licenses. If you use any CC-BY asset, its full attribution line goes into metadata.json's description.
           - Human-approval gates: where the Skill requires a human preview or design approval that is impossible in this headless CI, proceed with the most conservative choice and record exactly which gates were bypassed in NOTES.md; never fabricate an approval or acceptance.
           - Keep total runtime under 105 minutes of compute. Do not stop to ask or to summarize before the MP4 exists: keep working with tools until it does. Use /home/runner/w/tmp for scratch files, never /tmp.
+          - Ship order is strict: the moment the final MP4 renders, FIRST copy it to /home/runner/w/out/stickman.mp4, then write metadata.json, then NOTES.md, then stop. Do NOT run the style's visual/image review in this session and never open image or PNG files here (image reads have hung this model mid-run); a separate workflow step does the pixel QA after you finish.
 
           ${VARIETY}
 
@@ -344,7 +345,7 @@ jobs:
             while kill -0 $PIPE 2>/dev/null; do
               sleep 20; NOW=$(date +%s); CUR=$(activity)
               if [ "$CUR" != "$LAST" ]; then LAST=$CUR; LASTCHG=$NOW; fi
-              if [ $((NOW-LASTCHG)) -ge $STALL ]; then echo "STALL: no activity for ${STALL}s, restarting agent"; echo stall >> $HOME/w/stalls.log; pkill -9 -f "opencode run" || true; echo 1 > $HOME/w/last_stalled; break; fi
+              if [ $((NOW-LASTCHG)) -ge $STALL ]; then echo "STALL: no activity for ${STALL}s, restarting agent"; echo stall >> $HOME/w/stalls.log; pkill -9 -f "opencode run" || true; echo 1 > $HOME/w/last_stalled; echo "backing off 60s before a fresh session"; sleep 60; break; fi
               if [ $((NOW-AT)) -ge $LIMIT ]; then echo "attempt time limit"; pkill -9 -f "opencode run" || true; break; fi
             done
             wait $PIPE 2>/dev/null || true
@@ -519,6 +520,60 @@ jobs:
             fi
           fi
           python3 variety.py out/stickman.mp4 | tee out/variety-final.json
+      - name: Visual QA of the render (pixel review gates any publish)
+        if: steps.pick.outputs.skip != 'true'
+        working-directory: /home/runner/w
+        run: |
+          if [ ! -s out/stickman.mp4 ]; then echo "no rendered video; nothing to QA"; exit 0; fi
+          rm -f out/qa_result.json
+          cat > $HOME/w/qa_agent.sh <<'QA_SH'
+          #!/bin/bash
+          trap '' TERM HUP
+          export OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}'
+          MODEL=opencode/deepseek-v4.1-flash-free
+          cd /home/runner/w
+          mkdir -p qa_frames && rm -f qa_frames/*.png
+          D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out/stickman.mp4 | cut -d. -f1)
+          for f in 0.05 0.2 0.35 0.5 0.65 0.8 0.95; do
+            T=$(python3 -c "print(round(float('$D')*$f,1))")
+            ffmpeg -y -v error -ss "$T" -i out/stickman.mp4 -frames:v 1 -vf scale=540:960 qa_frames/f$f.png
+          done
+          ls -la qa_frames
+          for i in 1 2 3; do
+            [ -s out/qa_result.json ] && break
+            echo "QA attempt $i"
+            timeout -k 30 300 opencode run -m $MODEL "Visually review the finished vertical Short /home/runner/w/out/stickman.mp4 on this topic: $(cat topic.txt). Sampled frames from across its full length are at /home/runner/w/qa_frames/ (seven images, f0.05 through f0.95). READ every one of those frame images, then check honestly: captions or on-screen text are present and readable, the visuals actually match the topic, no blank or black or corrupt frames, composition fills the portrait frame. Then write /home/runner/w/out/qa_result.json containing exactly this JSON shape: {'pass': true or false, 'frames_checked': <count you read>, 'notes': '<what you actually saw, including anything wrong>'}. Set pass only if you really read the frames and the video looks right. Keep your output short." > out/qa-attempt-$i.log 2>&1 || true
+            pkill -9 -f "opencode run" || true
+            python3 - <<'QCHECK'
+          import json, os
+          p = '/home/runner/w/out/qa_result.json'
+          ok = False
+          try:
+              q = json.load(open(p))
+              ok = isinstance(q.get('pass'), bool) and int(q.get('frames_checked', 0)) >= 5
+              print('QA attempt result accepted:', ok)
+          except Exception as e:
+              print('QA result unusable:', e)
+          if not ok and os.path.exists(p):
+              os.remove(p)
+          QCHECK
+          done
+          QA_SH
+          chmod +x $HOME/w/qa_agent.sh
+          $HOME/w/qa_agent.sh || true
+          python3 - <<'QGATE'
+          import json, sys
+          try:
+              q = json.load(open('/home/runner/w/out/qa_result.json'))
+              ok = q.get('pass') is True
+              print('QA gate:', 'PASS' if ok else 'FAIL', '|', str(q.get('notes', ''))[:400])
+          except Exception as e:
+              ok = False
+              print('QA gate: pixel review could not complete:', e)
+          if not ok:
+              print('Blocking publish: no public upload without a completed pixel review; run fails, topic keeps its queue slot')
+          sys.exit(0 if ok else 1)
+          QGATE
       - name: Upload Short to YouTube (only when explicitly enabled)
         if: steps.pick.outputs.skip != 'true' && vars.YT_UPLOAD_ENABLE == 'true' && env.YT_CLIENT_ID != '' && env.YT_CLIENT_SECRET != '' && env.YT_REFRESH_TOKEN != ''
         working-directory: /home/runner/w
