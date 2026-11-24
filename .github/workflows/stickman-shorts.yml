@@ -137,7 +137,7 @@ jobs:
               open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=true\n')
               sys.exit(0)
           open('/home/runner/w/topic.txt', 'w').write(chosen['topic'].strip() + '\n')
-          daily_style = {'m': 'C3', 'a': 'B7', 'e': ('A5' if ist.date().toordinal() % 2 == 0 else 'H1')}[cur]
+          daily_style = {'m': 'C3', 'a': 'B7', 'e': 'C3'}[cur]
           open('/home/runner/w/style.txt', 'w').write(daily_style + '\n')
           open('/home/runner/w/topic_id.txt', 'w').write(chosen['id'])
           open(os.environ['GITHUB_OUTPUT'], 'a').write('skip=false\ntopic_id=%s\n' % chosen['id'])
