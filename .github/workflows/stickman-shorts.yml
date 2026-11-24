@@ -16,7 +16,7 @@ on:
         required: false
         default: false
   # Three external dispatches daily:08:47,13:47,17:47IST. No scheduler changes here.
-  # Daily mix: morning C3 animated3D-world, afternoon B7 Pixel, evening A5/H1 alternating.
+  # Daily mix: morning C3 animated3D-world, afternoon B7 Pixel, evening C3 animated3D-world.
 permissions:
   contents: write
   issues: write
@@ -218,6 +218,37 @@ jobs:
             pip install uv playwright
             python3 -m playwright install --with-deps chromium
           fi
+      - name: Install and regression-test Pixel word spacing
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          if [ "$(cat /home/runner/w/style.txt)" = B7 ]; then
+            python3 -m pip install Pillow==12.0.0
+            python3 - <<'PIXEL_PY'
+          from pathlib import Path
+          import importlib.util, shutil
+          root = Path('/home/runner/w/svd/skills/directing-stickman-videos/scripts')
+          helper = root / 'b7_pixel_primitives.py'
+          helper.write_text(helper.read_text() + '\n\ndef draw_word_caption(image, value, highlight_index=0, y=264, scale=1,\n                      color=CREAM, highlight=TEAL):\n    """Draw a complete line; spaces retain the exact bitmap-font advance."""\n    import re\n    value = _text(value, GLYPHS)\n    if value != " ".join(value.split()) or not value:\n        raise ValueError("Use nonempty words separated by one literal space")\n    scale = _scale(scale)\n    width, height = text_size(value, scale)\n    box_width = width + scale\n    if box_width > image.width * .65:\n        raise ValueError("Choose a shorter semantic cue; never delete spaces or shrink type")\n    if y < 0 or y + height + scale > image.height:\n        raise ValueError("Caption outside frame")\n    x = (image.width - box_width) // 2\n    if min(x, image.width - x - box_width) < image.width * .175:\n        raise ValueError("Caption margin too small")\n    draw = ImageDraw.Draw(image)\n    word = -1\n    for token in re.findall(r" +|[^ ]+", value):\n        if not token.isspace():\n            word += 1\n            draw_label(draw, (x, y), token,\n                       highlight if word == highlight_index else color, scale, True)\n        # text_size removes the final letter gap; restore it for every token.\n        # In particular a space advances 3 blank columns + 1 letter gap.\n        x += text_size(token, scale)[0] + scale\n    left = (image.width - box_width) // 2\n    return left, y, box_width, height + scale\n')
+          spec = importlib.util.spec_from_file_location('pixel', helper)
+          m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+          from PIL import Image
+          assert m.text_size('YOU HATE')[0] > m.text_size('YOUHATE')[0]
+          board = Image.new('RGB', (180, 320), '#152036')
+          for line, y in [('YOU HATE', 60), ('YOU KEEP WAITING', 100), ('PAST COSTS ARE GONE', 140), ('TODAY IS STILL YOURS', 180)]:
+              a = Image.new('RGB', (180, 320), '#152036')
+              b = a.copy()
+              bounds = m.draw_word_caption(a, line, 0, y)
+              m.draw_caption(b, line, y=y, margin=32)
+              # Color differs, geometry cannot: same ink mask including spaces/shadow.
+              bg = (21, 32, 54)
+              assert [px != bg for px in a.getdata()] == [px != bg for px in b.getdata()]
+              assert bounds[2] <= 117
+              m.draw_word_caption(board, line, 1, y)
+          m.upscale(board, 6).save('/home/runner/w/out/pixel-spacing-proof.png')
+          shutil.copy(helper, '/home/runner/w/project/b7_pixel_primitives.py')
+          print('Pixel full-line and colored-word geometry match; spaces preserved')
+          PIXEL_PY
+          fi
       - name: Prepare supplied animated3D-world project (C3 only)
         if: steps.pick.outputs.skip != 'true'
         run: |
@@ -379,7 +410,7 @@ jobs:
             H1) SKILL_DIR=/home/runner/w/hm; KIND="explainer Short with no characters (Bauhaus poster motion graphics)"; STYLE_NAME="H1 Bauhaus Poster Motion (huashu-art-motion)"; STYLE_REF="its track steps: shot list template, storyboard lint, then the engine"
                 ROUTE="HARD ORDER OF WORK FOR H1: as soon as the narration script is final and the narration wav is measured, write /home/runner/w/out/metadata.json and /home/runner/w/out/NOTES.md (first version) BEFORE building scenes or rendering anything; update NOTES.md at the end. The skill film_gate result yellow is ACCEPTABLE: make at most ONE fix pass on its findings, then ship the video. Never tune the gate beyond that, a late video with no metadata counts as a failed run. H1 uses the installed huashu-art-motion skill at /home/runner/w/hm INSTEAD of the stickman Skill (ignore any mention of the stickman Skill below). Work in the skill's track: write the shot list per references/shot-list template, lock ONE visual language for the whole film (flat 1920s Bauhaus poster look: cream paper, ink-black geometry, flat red/blue/yellow accents, thick rules, no gradients, no people), run scripts/storyboard_lint.py, copy scripts/engine into the project, build about 10 custom scenes as a film folder under engine/demos/<name>/, render with: cd <project>/engine && uv run --with playwright python render.py --film demos/<name> --width 1080 --height 1920 --fps 30 --crf 16 --out /home/runner/w/tmp/silent.mp4, then mux the narration (ffmpeg, -af apad, aac) to /home/runner/w/out/stickman.mp4 and run scripts/film_gate.py on it. All on-screen text and narration are English (the skill docs are Chinese). Captions are the narration verbatim, 2-3 word or clause chunks, large and readable on a cream strip. Skill human or independent review gates cannot run headless: record them in NOTES.md as bypassed." ;;
             *) STYLE="B7"; STYLE_NAME="B7 Pixel Theater"; STYLE_REF="references/b7-pixel-theater.md, references/b7-native-portrait.md, references/b7-review.md"
-                ROUTE="B7 is a project-local code style: follow references/b7-pixel-theater.md and its 9:16 portrait contract (native 180x320 canvas enlarged 6x to 1080x1920), using the Skill's bundled pixel/ending helpers with reviewed project-local code. Inspect the bundled reference films as the reference mandates." ;;
+                ROUTE="B7 is a project-local code style: follow references/b7-pixel-theater.md and its 9:16 portrait contract (native 180x320 canvas enlarged 6x to 1080x1920), using the Skill's bundled pixel/ending helpers with reviewed project-local code. Inspect the bundled reference films as the reference mandates. For all colored-word subtitles use the installed project/b7_pixel_primitives.py draw_word_caption(image, full_line, highlight_index, y=264). Pass the complete original line WITH literal spaces, never concatenate tokens, never hand-position words or trim space-only tokens. This helper measures and draws the same full-line advances, with explicit blank word gaps. If a cue overflows, split at an earlier semantic boundary, never remove spaces. Run its caption geometry tests and retain cue text/timing. Do not overwrite or recopy this patched helper from elsewhere." ;;
           esac
           SHIP_RULE="The moment the final MP4 renders, FIRST copy it to /home/runner/w/out/stickman.mp4, then write metadata.json, then NOTES.md, then stop."
           if [ "$STYLE" = "C3" ]; then SHIP_RULE="C3 exception: do not render full video here. Finish the complete source, narration, timing, sound, metadata and NOTES; write c3-ready.flag last. The next deterministic step renders and validates it."; fi
@@ -486,6 +517,12 @@ jobs:
           while kill -0 $AGENT_PID 2>/dev/null; do sleep 20; done
           tail -n 40 $HOME/w/out/agent-loop.log || true
           ls -la $HOME/w/out
+      - name: Retain Pixel project source
+        if: always() && steps.pick.outputs.skip != 'true'
+        run: |
+          if [ "$(cat /home/runner/w/style.txt 2>/dev/null)" = B7 ] && [ -d /home/runner/w/project ]; then
+            tar --exclude=node_modules --exclude=.git --exclude='*.mp4' --exclude='frames' --exclude='__pycache__' -C /home/runner/w/project -czf /home/runner/w/out/b7-project.tar.gz .
+          fi
       - name: Render saved C3 source with bounded deterministic export
         if: steps.pick.outputs.skip != 'true'
         working-directory: /home/runner/w/project
