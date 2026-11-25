@@ -197,7 +197,7 @@ jobs:
             T="$(cat topic.txt)"; ID="$(cat topic_id.txt)"
             rm -f choice.txt
             P="Pick the single best visual template for a 45-second vertical explainer Short on this topic: ${T}. Options: A5 = historical cartoon (people, eras, human stories, history, society, health and the body); B7 = pixel-art theater (games, tech, process, cause and effect, small characters acting things out); H1 = Bauhaus poster motion graphics, no characters (abstract ideas, math, physics, light and sound, economics, systems, data). Write ONLY the code A5 or B7 or H1 into the file /home/runner/w/choice.txt, nothing else, then stop."
-            ( OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -m opencode/hy4-flash-free "$P" > choose.log 2>&1 & )
+            ( OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -m opencode/deepseek-v4.1-flash-free "$P" > choose.log 2>&1 & )
             for _ in $(seq 1 18); do [ -s choice.txt ] && break; sleep 5; done
             sleep 2; pkill -9 -f "opencode run" || true
             C="$(tr -dc 'A-Za-z0-9' < choice.txt 2>/dev/null | tr a-z A-Z | head -c 2)"
@@ -396,7 +396,7 @@ jobs:
           print('wrote', out, round(secs, 2), 'seconds via', used)
           TTS_PY
           python3 $HOME/w/tts.py 'Narration route check.' $HOME/w/out/tts-check.wav
-      - name: OpenCode directs and renders the stickman Short (hy4-flash-free)
+      - name: OpenCode directs and renders the stickman Short (deepseek-v4.1-flash-free)
         if: steps.pick.outputs.skip != 'true'
         working-directory: /home/runner/w
         run: |
@@ -470,7 +470,7 @@ jobs:
           #!/bin/bash
           trap '' TERM HUP
           export OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}'
-          MODEL=opencode/hy4-flash-free
+          MODEL=opencode/deepseek-v4.1-flash-free
           START=$(date +%s)
           # Stall watchdog: kill an attempt that shows no activity (opencode.log growth or file changes under w/) for STALL seconds, so a silent hang costs minutes, not the whole budget.
           STALL=480
@@ -612,7 +612,7 @@ jobs:
           if ! check; then
             if [ -f out/stickman.mp4 ]; then
               echo "video exists; retrying metadata only"
-              ( OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -m opencode/hy4-flash-free "Write /home/runner/w/out/metadata.json for the already-rendered stickman Short about $(cat $HOME/w/topic.txt). Strictly valid JSON: follow $GITHUB_WORKSPACE/skills/youtube-shorts-metadata-generator/SKILL.md and write keys: title (the recommended pick, under 55 chars), titles (option_a_curiosity, option_b_contrarian, option_c_search_hybrid), detected_concept, primary_niche, description (skill formula, about 120-180 words, no hashtags inside, no sources list), hashtags (4-5 tags without #, must include shorts). Read /home/runner/w/out/NOTES.md for what the video contains." >> $HOME/w/out/opencode.log 2>&1 & )
+              ( OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -m opencode/deepseek-v4.1-flash-free "Write /home/runner/w/out/metadata.json for the already-rendered stickman Short about $(cat $HOME/w/topic.txt). Strictly valid JSON: follow $GITHUB_WORKSPACE/skills/youtube-shorts-metadata-generator/SKILL.md and write keys: title (the recommended pick, under 55 chars), titles (option_a_curiosity, option_b_contrarian, option_c_search_hybrid), detected_concept, primary_niche, description (skill formula, about 120-180 words, no hashtags inside, no sources list), hashtags (4-5 tags without #, must include shorts). Read /home/runner/w/out/NOTES.md for what the video contains." >> $HOME/w/out/opencode.log 2>&1 & )
               for _ in $(seq 1 18); do [ -s out/metadata.json ] && break; sleep 5; done
               sleep 3; pkill -9 -f "opencode run" || true
             fi
@@ -675,7 +675,7 @@ jobs:
             echo "flat video: one corrective pass"
             cp out/stickman.mp4 out/stickman_first_pass.mp4
             N=$(python3 -c "import json;print(json.load(open('out/variety-1.json'))['scenes'])")
-            ( timeout -k 30 1800 env OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -c -m opencode/hy4-flash-free "The rendered video /home/runner/w/out/stickman.mp4 is visually flat: it shows only about $N distinct backdrops and holds one set for most of the film. Do NOT change the narration or its timing. Re-render only the visuals so the film uses at least 7 clearly different backdrops or sets (different background, palette or composition) and changes set every 4 to 6 seconds, never holding one background longer than 8 seconds. For each mechanism beat go to a new location or a cutaway view, add supporting characters or props where they help, and keep all style, caption and 1080x1920 rules. Reuse the existing narration wav and mux it, write the new MP4 to /home/runner/w/out/stickman.mp4, and add a Backdrops list to NOTES.md. Do not open or view image files; check with ffprobe only. Use /home/runner/w/tmp for scratch files." > out/variety-retry.log 2>&1 || true ) 
+            ( timeout -k 30 1800 env OPENCODE_CONFIG_CONTENT='{"permission":{"external_directory":"allow","bash":"allow","edit":"allow","webfetch":"deny"}}' opencode run -c -m opencode/deepseek-v4.1-flash-free "The rendered video /home/runner/w/out/stickman.mp4 is visually flat: it shows only about $N distinct backdrops and holds one set for most of the film. Do NOT change the narration or its timing. Re-render only the visuals so the film uses at least 7 clearly different backdrops or sets (different background, palette or composition) and changes set every 4 to 6 seconds, never holding one background longer than 8 seconds. For each mechanism beat go to a new location or a cutaway view, add supporting characters or props where they help, and keep all style, caption and 1080x1920 rules. Reuse the existing narration wav and mux it, write the new MP4 to /home/runner/w/out/stickman.mp4, and add a Backdrops list to NOTES.md. Do not open or view image files; check with ffprobe only. Use /home/runner/w/tmp for scratch files." > out/variety-retry.log 2>&1 || true ) 
             pkill -9 -f "opencode run" || true
             D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out/stickman.mp4 2>/dev/null | cut -d. -f1)
             R=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 out/stickman.mp4 2>/dev/null)
