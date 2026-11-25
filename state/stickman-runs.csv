@@ -19,3 +19,4 @@ date,topic_id,topic,style,run_url,render,upload_status,youtube_url
 2026-11-24,n4,Why you forget things: storing a memory is not the same as finding it again,C3,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45392039045,done,uploaded,https://youtu.be/OAIWEg46aGg
 2026-11-25,n5,"Plan your day around friction, not willpower",C3,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45538918174,done,uploaded,https://youtu.be/wJqEF2j6RXk
 2026-11-25,b3,Why prices end in .99,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45574956357,done,uploaded,https://youtu.be/VnypH7bIAPM
+2026-11-25,n6,How focused time blocks can shrink a long to-do list,C3,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45612302951,failed (requeued as retry-1),disabled,
