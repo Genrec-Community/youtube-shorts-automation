@@ -396,6 +396,50 @@ jobs:
           print('wrote', out, round(secs, 2), 'seconds via', used)
           TTS_PY
           python3 $HOME/w/tts.py 'Narration route check.' $HOME/w/out/tts-check.wav
+      - name: Fetch open-source music bed (C3 only)
+        if: steps.pick.outputs.skip != 'true'
+        run: |
+          if [ "$(cat /home/runner/w/style.txt)" = "C3" ]; then
+            mkdir -p /home/runner/w/music
+            python3 - <<'MUSPY'
+          import urllib.request, hashlib, datetime
+          TRACKS = [
+            ("Wholesome", "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Wholesome.mp3", "9eadc79a1a2cb68cd63be1432ebf8f8ae3387cb9d2e85f9b8dbc74ba5a96b231"),
+            ("Deliberate Thought", "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Deliberate%20Thought.mp3", "243d5543c930bf54e95868bab9da860e67ce8835e3698881fda287bc58cc343f"),
+            ("Airport Lounge", "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Airport%20Lounge.mp3", "e20d316b541c72690a3b0311c9f3d40fd00717359ab7567d7df82a9316c1dec4"),
+          ]
+          name, url, sha = TRACKS[datetime.date.today().toordinal() % len(TRACKS)]
+          ok = False
+          try:
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+              b = urllib.request.urlopen(req, timeout=180).read()
+              ok = hashlib.sha256(b).hexdigest() == sha
+          except Exception as e:
+              print("music fetch failed:", e)
+          if ok:
+              open("/home/runner/w/music/bed.mp3", "wb").write(b)
+              open("/home/runner/w/music/track.txt", "w").write(name)
+              open("/home/runner/w/music/attribution.txt", "w").write('Music: "' + name + '" by Kevin MacLeod (incompetech.com), Licensed under Creative Commons: By Attribution 4.0 (https://creativecommons.org/licenses/by/4.0/)')
+              print("music bed ready:", name)
+          else:
+              print("no music bed; C3 uses the code-sound fallback")
+          MUSPY
+            if [ -s /home/runner/w/music/bed.mp3 ]; then
+              cat > /home/runner/w/music-mix.sh <<'MIXSH'
+          #!/bin/bash
+          # Mix the pinned open-source music bed quietly under the narration into public/<ep>/mix.wav.
+          set -e
+          PROJ="$1"; EP="${2:-ep1}"
+          TOTAL=$(python3 -c "import json; print(json.load(open('$PROJ/episodes/$EP/timing.json'))['total'] + 0.7)")
+          FADE=$(python3 -c "print(max(0.0, $TOTAL - 3.0))")
+          ffmpeg -y -v error -stream_loop -1 -i /home/runner/w/music/bed.mp3 -i "$PROJ/public/$EP/voice.wav" \
+            -filter_complex "[0:a]atrim=0:${TOTAL},asetpts=PTS-STARTPTS,volume=0.18,afade=t=in:st=0:d=2,afade=t=out:st=${FADE}:d=3[bed];[1:a]aformat=sample_rates=44100:channel_layouts=stereo[vox];[bed][vox]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[aout]" \
+            -map "[aout]" -ar 44100 -ac 2 -c:a pcm_s16le "$PROJ/public/$EP/mix.wav"
+          echo "ATTRIBUTION: $(cat /home/runner/w/music/attribution.txt)"
+          MIXSH
+              chmod +x /home/runner/w/music-mix.sh
+            fi
+          fi
       - name: OpenCode directs and renders the stickman Short (deepseek-v4.1-flash-free)
         if: steps.pick.outputs.skip != 'true'
         working-directory: /home/runner/w
@@ -404,7 +448,7 @@ jobs:
           SKILL_DIR=/home/runner/w/svd/skills/directing-stickman-videos; KIND="stickman explainer Short"
           case "$STYLE" in
             C3) SKILL_DIR=/home/runner/w/project; KIND="animated explainer with2D drawn characters/objects in3D sets"; STYLE_NAME="C3 Animated3D-world Cartoon (same engine as tanker experiment)"; STYLE_REF=".claude/skills/animated-shorts/SKILL.md, src/engine/Stage.tsx and src/ep1 examples"
-                ROUTE="Use the supplied Three.js plus Remotion project already installed at /home/runner/w/project. Preserve its Stage/Toon/kit camera and lighting grammar. Rewrite src/ep1 sets/cast/shots and episodes/ep1 story/shots/timing/sound for THIS topic, never the bundled London example. At least7 distinct lit3D sets or mechanism cutaways, camera glides, readable large captions,2D drawn characters only where useful. No talking presenter, flat slideshow, stock footage or claimed physical simulation. Use channel python /home/runner/w/tts.py for each narration shot, concatenate their WAVs and write exact measured shot starts/ends and per-word timing in the existing timing.json schema (w,start,end). Generate original low-volume code sound using scripts/sound.mjs ep1, which mixes public/ep1/voice.wav into mix.wav. Do not call the template voice.mjs or substitute voice/model. Modify composition Short only as needed; keep1080x1920/30fps. DO NOT render the full MP4 in the agent session. Write metadata.json and NOTES.md to /home/runner/w/out, run npx tsc --noEmit, then write /home/runner/w/out/c3-ready.flag last and stop. A later deterministic step renders the exact saved project. The ready flag is progress, not a finished video." ;;
+                ROUTE="Use the supplied Three.js plus Remotion project already installed at /home/runner/w/project. Preserve its Stage/Toon/kit camera and lighting grammar. Rewrite src/ep1 sets/cast/shots and episodes/ep1 story/shots/timing/sound for THIS topic, never the bundled London example. At least7 distinct lit3D sets or mechanism cutaways, camera glides, readable large captions,2D drawn characters only where useful. No talking presenter, flat slideshow, stock footage or claimed physical simulation. Use channel python /home/runner/w/tts.py for each narration shot, concatenate their WAVs and write exact measured shot starts/ends and per-word timing in the existing timing.json schema (w,start,end). For the sound bed: if /home/runner/w/music-mix.sh exists, do NOT run scripts/sound.mjs; after public/ep1/voice.wav and episodes/ep1/timing.json are final, run bash /home/runner/w/music-mix.sh /home/runner/w/project ep1 to mix a pinned open-source Kevin MacLeod music track quietly under the narration into public/ep1/mix.wav, then copy the ATTRIBUTION line it prints verbatim into metadata.json's description. Only if that script is missing or fails, generate the old low-volume code sound with scripts/sound.mjs ep1 as a fallback. Do not call the template voice.mjs or substitute voice/model. Modify composition Short only as needed; keep1080x1920/30fps. DO NOT render the full MP4 in the agent session. Write metadata.json and NOTES.md to /home/runner/w/out, run npx tsc --noEmit, then write /home/runner/w/out/c3-ready.flag last and stop. A later deterministic step renders the exact saved project. The ready flag is progress, not a finished video." ;;
             A5) STYLE_NAME="Style 5 Historical Cartoon (code-rendered approximation)"; STYLE_REF="references/historical-cartoon.md and references/a1-a5-direction.md (the drawing grammar and era guidance only)"
                 ROUTE="A5 is one of the Skill's A (Model Engine) styles, which normally depend on external AI video generation. That is NOT available here (free-only, headless CI). Build the video with project-local code: draw each scene as 2D vector/canvas frames at native 1080x1920 (the Skill's node runtime has @napi-rs/canvas and sharp; SVG rasterized is fine) following the style's drawing grammar (character look, palette, painted-style backgrounds, expressive simple faces, caption-safe layout), animate with real motion, mux with the narration and a locally synthesized quiet music bed, encode with ffmpeg. Render at the full 1080x1920 from the start; do not drop to 720p for speed (if it is slow, simplify scenes instead). State plainly in NOTES.md that this is a code-rendered approximation of the style, not generated video." ;;
             H1) SKILL_DIR=/home/runner/w/hm; KIND="explainer Short with no characters (Bauhaus poster motion graphics)"; STYLE_NAME="H1 Bauhaus Poster Motion (huashu-art-motion)"; STYLE_REF="its track steps: shot list template, storyboard lint, then the engine"
@@ -437,7 +481,7 @@ jobs:
           - Route: ${ROUTE}
           - Project folder: /home/runner/w/project (outside the Skill, as required). Final video must be exactly 1080x1920, 30 fps, H.264 + AAC; verify with ffprobe before finishing and re-render at full size if it is smaller.
           - Narration TTS: the project's configured local route is python3 /home/runner/w/tts.py "<text>" <out.wav> (the channel voice, already en-US neural at +12% with the channel EQ and light pause trimming applied automatically; do not post-process it, do not pick a voice or engine, and use the measured duration of the returned wav for timing). Do not attempt other TTS providers or engines. Voice cloning is forbidden.
-          - Music/SFX: only what the Skill can synthesize locally or its own bundled assets; skip anything needing downloads or licenses. If you use any CC-BY asset, its full attribution line goes into metadata.json's description.
+          - Music/SFX: only what the Skill can synthesize locally or its own bundled assets, plus the workflow-pinned open-source C3 music bed (mixed via /home/runner/w/music-mix.sh when present); skip anything else needing downloads or licenses. If you use any CC-BY asset (the C3 bed is CC-BY 4.0), its full attribution line goes into metadata.json's description.
           - Human-approval gates: where the Skill requires a human preview or design approval that is impossible in this headless CI, proceed with the most conservative choice and record exactly which gates were bypassed in NOTES.md; never fabricate an approval or acceptance.
           - Keep total runtime under 105 minutes of compute. Do not stop to ask or to summarize before the MP4 exists: keep working with tools until it does. Use /home/runner/w/tmp for scratch files, never /tmp.
           - Ship order: ${SHIP_RULE} Do NOT run the style's visual/image review in this session and never open image or PNG files here (image reads have hung this model mid-run); a separate workflow step does the pixel QA after you finish.
