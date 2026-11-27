@@ -576,7 +576,7 @@ jobs:
             npx tsc --noEmit
             # Retain expensive creative work BEFORE export, including failed/timeout renders.
             tar --exclude=node_modules --exclude=.git --exclude=out -czf /home/runner/w/out/c3-project.tar.gz .
-            timeout -k 30 7200 npx remotion render src/index.ts Short /home/runner/w/out/stickman.mp4 --gl=swangle --concurrency=4 --codec=h264 --crf=18 --log=info
+            timeout -k 30 7200 npx remotion render src/index.ts Short /home/runner/w/out/stickman.mp4 --gl=swangle --concurrency=4 --codec=h264 --crf=18 --log=info --timeout=120000
           fi
       - name: Validate video + metadata (one corrective retry)
         if: steps.pick.outputs.skip != 'true'
