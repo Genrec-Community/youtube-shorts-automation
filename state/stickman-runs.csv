@@ -24,3 +24,4 @@ date,topic_id,topic,style,run_url,render,upload_status,youtube_url
 2026-11-26,b4,How compound interest works,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45781884077,done,uploaded,https://youtu.be/-jvywQlJyAg
 2026-11-26,n7,How checking your phone first thing in the morning can pull your attention for the day,C3,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45818239876,done,uploaded,https://youtu.be/pL23pYOMaaU
 2026-11-27,n8,Why re-reading is a weak way to study and recalling from memory works better,C3,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45933280253,failed (requeued as retry-1),disabled,
+2026-11-27,b5,Economies of scale: why big factories make each item cheaper,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45964499791,done,uploaded,https://youtu.be/f3R_hu5X4dU
