@@ -537,7 +537,7 @@ jobs:
             if [ "$(cat $HOME/w/style.txt)" = C3 ] && [ -s $HOME/w/out/c3-ready.flag ]; then echo "C3 source handoff ready"; break; fi
             if [ -s $HOME/w/out/stickman.mp4 ] && [ "$(ffprobe -v error -show_entries format=duration -of csv=p=0 $HOME/w/out/stickman.mp4 | cut -d. -f1)" -ge 20 ] 2>/dev/null; then echo "video present after attempt $((i-1))"; break; fi
             [ "$(cat $HOME/w/stalls.log 2>/dev/null | wc -l)" -ge 4 ] && { echo "4 stalls: giving up fast instead of burning the budget"; break; }
-            BUDGET=6600; [ "$(cat $HOME/w/style.txt)" = C3 ] && BUDGET=2100
+            BUDGET=6600; [ "$(cat $HOME/w/style.txt)" = C3 ] && BUDGET=4500
             LEFT=$(( BUDGET - ($(date +%s) - START) ))
             [ $LEFT -lt 300 ] && { echo "time budget used up"; break; }
             if [ $i -eq 1 ]; then
