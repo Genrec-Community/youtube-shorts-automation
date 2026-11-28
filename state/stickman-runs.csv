@@ -27,3 +27,4 @@ date,topic_id,topic,style,run_url,render,upload_status,youtube_url
 2026-11-27,b5,Economies of scale: why big factories make each item cheaper,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45964499791,done,uploaded,https://youtu.be/f3R_hu5X4dU
 2026-11-27,n8,Why re-reading is a weak way to study and recalling from memory works better,C3,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/45997370563,done,uploaded,https://youtu.be/alhmvmN-cdU
 2026-11-28,b6,Loss leaders: why stores sell some things at or below cost,B7,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/46125097230,done,uploaded,https://youtu.be/xEpLMZGIbhQ
+2026-11-28,n9,Why your phone pulls you in: unpredictable rewards and tiny progress loops,C3,https://github.com/Genrec-Community/youtube-shorts-automation/actions/runs/46143896464,failed (requeued as retry-1),disabled,
